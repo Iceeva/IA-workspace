@@ -117,8 +117,9 @@ class Orchestrator:
             self.total_tokens += res.tokens
             if node.agent == "tester":
                 await self._test_fix_loop(node, graph, mission, ctx)
-            node.status = TaskStatus.COMPLETED
-            await self.emit("task.completed", self._dump(node))
+            if node.status is TaskStatus.RUNNING:  # ne pas écraser REVIEW_REQUIRED posé par la boucle test/debug
+                node.status = TaskStatus.COMPLETED
+                await self.emit("task.completed", self._dump(node))
             await self.emit("task.output", {"id": node.id, "agent": node.agent, "output": node.output[:50_000]})
             for other in graph.nodes.values():  # bus de messages : résultat transmis aux agents dépendants
                 if node.id in other.depends_on:

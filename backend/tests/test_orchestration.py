@@ -93,3 +93,14 @@ def test_workflow_preset_skips_planner():
         graph_from_workflow([{"id": "x", "agent": "debugger"}])
     with pytest.raises(GraphError):
         graph_from_workflow([{"id": "a", "agent": "coder", "depends_on": ["a"]}])
+
+
+def test_unresolved_failure_keeps_review_required():
+    """Si le Tester échoue encore après les tours de correction, la tâche doit rester « À relire »."""
+    orch, events = make({"Planner": [PLAN], "Researcher": ["r"], "Architect": ["ar"], "Coder": ["code"],
+                         "Tester": ["VERDICT: FAIL boom"], "Debugger": ["fixed"], "Reviewer": ["FINAL"]})
+    result = asyncio.run(orch.run("mission"))
+    status = {t["id"]: t["status"] for t in result["tasks"]}
+    assert status["d"] == "REVIEW_REQUIRED"
+    assert "task.review_required" in events
+    assert status["e"] == "COMPLETED"
