@@ -87,8 +87,11 @@ class OllamaProvider(_OpenAICompatible):
 class AnthropicProvider(LLMProvider):
     name = "anthropic"
 
+    def __init__(self, api_key: str | None = None):
+        self._api_key = api_key
+
     async def chat(self, messages, *, model, temperature=0.2, max_tokens=4096) -> LLMResponse:
-        key = os.getenv("ANTHROPIC_API_KEY")
+        key = self._api_key or os.getenv("ANTHROPIC_API_KEY")
         if not key:
             raise LLMConfigError("ANTHROPIC_API_KEY est requis pour le provider 'anthropic'")
         system = "\n\n".join(m.content for m in messages if m.role == "system")
@@ -104,6 +107,53 @@ class AnthropicProvider(LLMProvider):
             raise LLMError("Réponse inattendue du provider anthropic") from e
         u = data.get("usage", {})
         return LLMResponse(text, model, u.get("input_tokens", 0), u.get("output_tokens", 0), data)
+
+
+class GenericOpenAIProvider(_OpenAICompatible):
+    """Tout serveur compatible OpenAI (Mistral, DeepSeek, xAI, Groq, Together, Fireworks, LM Studio, vLLM,
+    llama.cpp server, LocalAI, Ollama…). L'URL et la clé viennent de la configuration, pas de l'environnement."""
+
+    def __init__(self, name: str, base_url: str, api_key: str | None = None):
+        self.name, self.base_url, self._api_key = name, base_url.rstrip("/"), api_key
+
+    def _key(self) -> str | None:
+        return self._api_key or None
+
+
+# Points d'entrée par défaut, modifiables par l'utilisateur dans l'interface (vérifiez-les : ils évoluent).
+PRESETS: dict[str, dict] = {
+    "openai": {"base_url": "https://api.openai.com/v1", "needs_key": True},
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "needs_key": True},
+    "mistral": {"base_url": "https://api.mistral.ai/v1", "needs_key": True},
+    "deepseek": {"base_url": "https://api.deepseek.com/v1", "needs_key": True},
+    "xai": {"base_url": "https://api.x.ai/v1", "needs_key": True},
+    "groq": {"base_url": "https://api.groq.com/openai/v1", "needs_key": True},
+    "together": {"base_url": "https://api.together.xyz/v1", "needs_key": True},
+    "fireworks": {"base_url": "https://api.fireworks.ai/inference/v1", "needs_key": True},
+    "google": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "needs_key": True},
+    "cohere": {"base_url": "https://api.cohere.ai/compatibility/v1", "needs_key": True},
+    "ollama": {"base_url": "http://localhost:11434/v1", "needs_key": False},
+    "lmstudio": {"base_url": "http://localhost:1234/v1", "needs_key": False},
+    "llamacpp": {"base_url": "http://localhost:8080/v1", "needs_key": False},
+    "localai": {"base_url": "http://localhost:8080/v1", "needs_key": False},
+    "vllm": {"base_url": "http://localhost:8000/v1", "needs_key": False},
+    "custom": {"base_url": "", "needs_key": False},
+}
+
+
+def build_provider(kind: str, base_url: str | None = None, api_key: str | None = None) -> LLMProvider:
+    """Instancie un fournisseur depuis sa configuration (clé déjà déchiffrée, jamais journalisée)."""
+    if kind == "anthropic":
+        return AnthropicProvider(api_key)
+    preset = PRESETS.get(kind)
+    if preset is None:
+        raise LLMConfigError(f"Type de fournisseur inconnu: {kind}")
+    url = base_url or preset["base_url"]
+    if not url:
+        raise LLMConfigError(f"Le fournisseur '{kind}' nécessite une URL (endpoint)")
+    if preset["needs_key"] and not api_key:
+        raise LLMConfigError(f"Une clé API est requise pour le fournisseur '{kind}'")
+    return GenericOpenAIProvider(kind, url, api_key)
 
 
 _REGISTRY = {c.name: c for c in (OpenRouterProvider, OpenAIProvider, AnthropicProvider, OllamaProvider)}
