@@ -5,3 +5,12 @@ __pycache__/
 .venv/
 *.pyc
 .angular/
+.storage/
+.pytest_cache/
+.env.*
+!.env.example
+*.egg-info/
+.DS_Store
+coverage/
+.idea/
+.vscode/

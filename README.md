@@ -18,10 +18,8 @@ Le worker écrit des `execution_events` ; le frontend les lit par `GET /api/exec
 cp .env.example .env        # renseigner JWT_SECRET, JWT_REFRESH_SECRET et une clé LLM
 docker compose up --build   # postgres, redis, backend (:8000), worker, frontend (:4200)
 ```
-Première fois, générer la migration initiale (non fournie, voir Limitations) :
-```bash
-cd backend && alembic revision --autogenerate -m "initial" && alembic upgrade head
-```
+Les migrations sont appliquées automatiquement au démarrage du backend (`alembic upgrade head`, voir `backend/Dockerfile`).
+Pour les modifier : `cd backend && alembic revision --autogenerate -m "..."`.
 Tests : `cd backend && pytest`. Santé : `GET /health`. Docs OpenAPI : `/docs`.
 
 ## Choix techniques documentés
@@ -41,6 +39,17 @@ multi-tenant avec RBAC, workspaces/projets, agents configurables, orchestrateur 
 workflows personnalisés (éditeur glisser-déposer), bus de messages inter-agents, mémoire (conversation/projet/agent), fichiers (validation,
 stockage objet, extraction PDF/DOCX/XLSX/CSV/JSON/ZIP, indexation), Code Agent (écriture de fichiers + diffs, éditeur Monaco),
 chat en streaming (Markdown, coloration, copie, régénération, modification, pièces jointes), usage et quotas, administration, audit, notifications.
+
+## Suivi du projet avec Git
+Le dépôt est déjà initialisé (branche `main`). Le premier commit contient l'état tel que fourni ; chaque évolution suit.
+```bash
+git log --oneline            # historique de la conception
+git switch -c feat/ma-idee   # une branche par fonctionnalité
+git add -A && git commit -m "feat(chat): ..."
+git diff                     # voir ce qui a changé
+```
+Convention de messages : `feat`, `fix`, `docs`, `test`, `chore`, `refactor` + portée entre parenthèses. Le journal des changements est dans `CHANGELOG.md`.
+Pour publier : `git remote add origin <url> && git push -u origin main`.
 
 ## Documentation
 `docs/API.md`, `AGENTS.md`, `SECURITY.md`, `DEPLOYMENT.md`, `DEVELOPMENT.md`, `ARCHITECTURE.md`.
