@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16
+    environment: { POSTGRES_USER: aiw, POSTGRES_PASSWORD: aiw, POSTGRES_DB: aiw }
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U aiw"], interval: 5s, retries: 10 }
+  redis:
+    image: redis:7
+  backend:
+    build: { context: ., dockerfile: backend/Dockerfile }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aiw:aiw@postgres:5432/aiw
+      REDIS_URL: redis://redis:6379/0
+    volumes: ["storage:/srv/.storage"]
+    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_started } }
+    ports: ["8000:8000"]
+  worker:
+    build: { context: ., dockerfile: worker/Dockerfile }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aiw:aiw@postgres:5432/aiw
+      REDIS_URL: redis://redis:6379/0
+    volumes: ["storage:/srv/.storage"]
+    depends_on: [backend]
+  frontend:
+    image: node:22
+    working_dir: /app
+    volumes: ["./frontend:/app"]
+    command: sh -c "npm install && npx ng serve --host 0.0.0.0"
+    ports: ["4200:4200"]
+volumes: { pgdata: {}, storage: {} }
