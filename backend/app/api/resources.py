@@ -13,7 +13,7 @@ from app.models.entities import Agent, Execution, ExecutionEvent, Project, Role,
 from app.services.admin_config import ensure_provider_enabled
 from app.services.audit import audit
 from app.services.queue import enqueue
-from app.services.quota import ensure_token_budget
+from app.services.quota import ensure_cost_budget, ensure_token_budget
 from .deps import Ctx, ctx
 
 router = APIRouter(prefix="/api", tags=["resources"])
@@ -129,10 +129,12 @@ async def delete_agent(agent_id: uuid.UUID, c: Ctx = Depends(ctx), db: AsyncSess
 
 
 @router.post("/executions", status_code=202)
-async def create_execution(b: ExecutionIn, request: Request, c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
+async def create_execution(b: ExecutionIn, request: Request, c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db),
+                           confirm_budget: bool = Query(False)):
     c.require(Role.MEMBER)
     await _owned(db, Project, b.project_id, c.org_id, "Projet")
     await ensure_token_budget(db, c.org_id)
+    await ensure_cost_budget(db, c.org_id, confirm_budget)
     await ensure_provider_enabled(db)
     if b.workflow:
         from app.orchestration.engine import GraphError, graph_from_workflow

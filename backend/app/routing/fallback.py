@@ -2,7 +2,7 @@
 from __future__ import annotations
 import asyncio
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Awaitable, Callable
 
 from app.llm.base import LLMConfigError, LLMError, LLMProvider, LLMResponse
@@ -50,7 +50,7 @@ class FallbackProvider(LLMProvider):
                 self._down_until.pop(t.key, None)
                 if errors:
                     await self._emit("model.fallback", {"used": t.key, "failed": errors})
-                return r
+                return replace(r, model=t.key)  # le modèle réellement utilisé, « fournisseur:modèle »
             except _TRANSIENT as e:
                 self._down_until[t.key] = self.clock() + self.cooldown_s
                 errors.append(f"{t.key}: {str(e)[:160]}")

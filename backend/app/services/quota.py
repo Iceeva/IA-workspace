@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
-from app.models.entities import StoredFile, Subscription, UsageRecord
+from app.models.entities import AiSettings, StoredFile, Subscription, UsageRecord
+from app.services.budget import BudgetPolicy, evaluate
 
 
 def month_start() -> datetime:
@@ -39,3 +40,15 @@ async def ensure_storage_budget(db: AsyncSession, org_id: uuid.UUID, incoming: i
     sub = await subscription(db, org_id)
     if await storage_bytes(db, org_id) + incoming > sub.storage_limit_mb * 1024 * 1024:
         raise AppError(402, "STORAGE_QUOTA_EXCEEDED", "Quota de stockage atteint pour cette organisation")
+
+
+async def ensure_cost_budget(db: AsyncSession, org_id: uuid.UUID, confirmed: bool = False) -> None:
+    """Budget mensuel en dollars (§39) : bloque, ou exige une confirmation explicite selon `on_limit`."""
+    s = (await db.execute(select(AiSettings).where(AiSettings.organization_id == org_id))).scalar_one_or_none()
+    if s is None or s.monthly_budget_usd is None:
+        return
+    spent = (await db.execute(select(func.coalesce(func.sum(UsageRecord.cost_usd), 0.0)).where(
+        UsageRecord.organization_id == org_id, UsageRecord.created_at >= month_start()))).scalar_one()
+    d = evaluate(BudgetPolicy(s.monthly_budget_usd, s.on_limit), float(spent), 0.0, confirmed)
+    if not d.allowed:
+        raise AppError(402, "BUDGET_CONFIRMATION_REQUIRED" if d.needs_confirmation else "BUDGET_EXCEEDED", d.reason)

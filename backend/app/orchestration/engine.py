@@ -114,6 +114,7 @@ class Orchestrator:
             ctx = f"Mission: {mission}\n\n{graph.upstream_outputs(node)}"
             res = await agent.run(node.title, ctx)
             node.output, node.tokens, node.duration_ms = res.output, res.tokens, res.duration_ms
+            node.tokens_in, node.tokens_out, node.model = res.tokens_in, res.tokens_out, res.model
             self.total_tokens += res.tokens
             if node.agent == "tester":
                 await self._test_fix_loop(node, graph, mission, ctx)
@@ -129,6 +130,13 @@ class Orchestrator:
             node.status, node.error = TaskStatus.FAILED, str(e)
             await self.emit("task.failed", self._dump(node))
 
+    @staticmethod
+    def _add_usage(node: TaskNode, res) -> None:
+        """Les tours correctif/re-test sont facturés à la tâche de test (usage et coût fidèles)."""
+        node.tokens += res.tokens
+        node.tokens_in += res.tokens_in
+        node.tokens_out += res.tokens_out
+
     async def _test_fix_loop(self, node: TaskNode, graph: TaskGraph, mission: str, ctx: str) -> None:
         for round_ in range(1, self.max_fix_rounds + 1):
             if self._verdict(node.output) != "FAIL":
@@ -136,8 +144,10 @@ class Orchestrator:
             await self.emit("task.debugging", {"id": node.id, "round": round_})
             fix = await self._agent("debugger").run("Corrige les erreurs signalées.", f"{ctx}\n\n{node.output}")
             self.total_tokens += fix.tokens
+            self._add_usage(node, fix)
             retest = await self._agent("tester").run(node.title, f"{ctx}\n\nCorrectif:\n{fix.output}")
             self.total_tokens += retest.tokens
+            self._add_usage(node, retest)
             node.output = f"{retest.output}\n\n--- correctif (tour {round_}) ---\n{fix.output}"
         if self._verdict(node.output.split("--- correctif")[0]) == "FAIL":
             node.status = TaskStatus.REVIEW_REQUIRED
@@ -162,4 +172,5 @@ class Orchestrator:
     @staticmethod
     def _dump(n: TaskNode) -> dict:
         return {"id": n.id, "title": n.title, "agent": n.agent, "depends_on": n.depends_on,
-                "status": n.status.value, "tokens": n.tokens, "duration_ms": n.duration_ms, "error": n.error}
+                "status": n.status.value, "tokens": n.tokens, "duration_ms": n.duration_ms, "error": n.error,
+                "tokens_in": n.tokens_in, "tokens_out": n.tokens_out, "model": n.model}

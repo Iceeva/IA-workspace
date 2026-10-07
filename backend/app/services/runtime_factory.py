@@ -30,11 +30,17 @@ class Runtime:
     provider: FallbackProvider
     providers: dict
 
-    def route_key(self, role: str, agent_model: str | None) -> str:
-        """Clé de route à passer à l'orchestrateur pour un rôle : « auto:caps » si le routage automatique est actif."""
-        if self.prefs.mode == "auto" and (not agent_model or agent_model == "auto"):
-            return "auto:" + ",".join(sorted(ROLE_NEEDS.get(role, {"chat"})))
-        return agent_model or "auto:chat"
+    def route_key(self, role: str, agent_model: str | None = None, sensitive: bool = False) -> str:
+        """Clé de route pour un rôle. Un modèle explicitement choisi pour l'agent est respecté ; sinon la
+        préférence de l'organisation s'applique (auto → chaîne classée avec repli ; single/per_agent → modèle fixé).
+        Lève NoModelAvailable si la politique ne laisse aucun modèle possible."""
+        if agent_model and self.registry.get(agent_model):
+            return agent_model
+        needs = ROLE_NEEDS.get(role, {"chat"})
+        if self.prefs.mode == "auto":
+            self.router.route(needs, self.prefs, agent_id=role, sensitive=sensitive)  # valide la faisabilité
+            return "auto:" + ",".join(sorted(needs))
+        return self.router.route(needs, self.prefs, agent_id=role, sensitive=sensitive).chosen.key
 
 
 def _model(cfg: ProviderCfg, m: dict) -> ModelInfo:
@@ -68,3 +74,18 @@ def build_runtime(cfgs: list[ProviderCfg], prefs: RoutingPrefs | None = None, on
         first = cfgs[0].name  # identifiant brut (ancien format) : fournisseur prioritaire
         return [Target(providers[first], key, f"{first}:{key}")]
     return Runtime(registry, router, prefs, FallbackProvider(resolve, on_event), providers)
+
+
+def registry_from_configs(cfgs: list[ProviderCfg]) -> ModelRegistry:
+    """Registre de modèles sans instancier les fournisseurs (aperçu de routage, aucune clé nécessaire)."""
+    return ModelRegistry(_model(c, m) for c in cfgs if c.enabled for m in c.models)
+
+
+def prefs_from_settings(s) -> RoutingPrefs:
+    """Ligne AiSettings (ou None) → RoutingPrefs."""
+    if s is None:
+        return RoutingPrefs()
+    return RoutingPrefs(mode=s.mode, single=s.single_model, per_agent=dict(s.per_agent or {}),
+                        weights=dict(s.weights or {}), local_only=s.local_only, sensitive_local=s.sensitive_local,
+                        prefer_local=s.prefer_local, max_blended_cost=s.max_blended_cost,
+                        fallback=list(s.fallback or []))

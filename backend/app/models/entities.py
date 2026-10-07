@@ -196,7 +196,42 @@ class UsageRecord(Base):
     tokens: Mapped[int] = mapped_column(Integer, default=0)
     llm_calls: Mapped[int] = mapped_column(Integer, default=1)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_in: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProviderConfig(Mixin, Base):
+    """Fournisseur d'IA configuré par une organisation. La clé API n'est stockée que chiffrée."""
+    __tablename__ = "provider_configs"
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="uq_provider_org_name"),)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    name: Mapped[str] = mapped_column(String(60))
+    base_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    models: Mapped[list] = mapped_column(JSON, default=list)   # [{id, caps, quality, speed, cost_in, cost_out, context}]
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    priority: Mapped[int] = mapped_column(Integer, default=100)
+    local: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class AiSettings(Mixin, Base):
+    """Préférences de routage des modèles, confidentialité et budget d'une organisation (une ligne par organisation)."""
+    __tablename__ = "ai_settings"
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), unique=True)
+    mode: Mapped[str] = mapped_column(String(12), default="auto")        # single | per_agent | auto
+    single_model: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    per_agent: Mapped[dict] = mapped_column(JSON, default=dict)
+    weights: Mapped[dict] = mapped_column(JSON, default=lambda: {"quality": 0.5, "speed": 0.2, "cost": 0.3})
+    local_only: Mapped[bool] = mapped_column(Boolean, default=False)
+    sensitive_local: Mapped[bool] = mapped_column(Boolean, default=False)
+    prefer_local: Mapped[bool] = mapped_column(Boolean, default=False)
+    max_blended_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fallback: Mapped[list] = mapped_column(JSON, default=list)
+    monthly_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    on_limit: Mapped[str] = mapped_column(String(10), default="block")    # block | confirm
 
 
 class Subscription(Mixin, Base):

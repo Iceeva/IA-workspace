@@ -10,6 +10,8 @@ class AgentResult:
     tokens: int = 0
     duration_ms: int = 0
     model: str = ""
+    tokens_in: int = 0
+    tokens_out: int = 0
 
 
 @dataclass
@@ -36,7 +38,8 @@ class BaseAgent:
                     Message("user", f"{instruction}\n\n<context>\n{context}\n</context>")]
             r = await self.provider.chat(msgs, model=self.model, temperature=self.temperature)
             self.status = "done"
-            return AgentResult(r.content, r.total_tokens, int((time.monotonic() - t0) * 1000), r.model)
+            return AgentResult(r.content, r.total_tokens, int((time.monotonic() - t0) * 1000), r.model,
+                               r.prompt_tokens, r.completion_tokens)
         except Exception:
             self.status = "failed"
             raise

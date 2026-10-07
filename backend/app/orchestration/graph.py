@@ -30,6 +30,9 @@ class TaskNode:
     error: str | None = None
     tokens: int = 0
     duration_ms: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    model: str = ""  # modèle réellement utilisé (peut différer du modèle demandé après un fallback)
 
 
 class TaskGraph:

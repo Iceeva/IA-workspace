@@ -37,10 +37,19 @@ def test_resolution_of_route_keys():
 
 def test_route_keys_per_role():
     rt = build_runtime(CFGS)
-    assert rt.route_key("coder", None) == "auto:chat,code" and rt.route_key("reviewer", "auto") == "auto:chat"
-    assert rt.route_key("coder", "cloud:big") == "cloud:big"
+    assert rt.route_key("coder") == "auto:chat,code" and rt.route_key("reviewer", "auto") == "auto:chat"
+    assert rt.route_key("coder", "cloud:big") == "cloud:big"            # choix explicite de l'agent respecté
     manual = build_runtime(CFGS, RoutingPrefs(mode="single", single="cloud:big"))
-    assert manual.route_key("coder", None) == "auto:chat"
+    assert manual.route_key("coder") == "cloud:big"
+    per = build_runtime(CFGS, RoutingPrefs(mode="per_agent", per_agent={"coder": "local:qwen"}, single="cloud:big"))
+    assert per.route_key("coder") == "local:qwen" and per.route_key("planner") == "cloud:big"
+    strict = build_runtime(CFGS, RoutingPrefs(local_only=True))
+    assert strict.route_key("coder").startswith("auto:")
+    assert [t.key for t in strict.provider.resolve("auto:chat,code")] == ["local:qwen"]   # le cloud n'est jamais tenté
+    try:
+        build_runtime([CFGS[0]], RoutingPrefs(local_only=True)).route_key("coder"); assert False
+    except NoModelAvailable:
+        pass
 
 
 def test_end_to_end_fallback_when_cloud_fails():

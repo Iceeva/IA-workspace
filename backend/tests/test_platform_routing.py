@@ -102,7 +102,7 @@ def test_fallback_uses_next_provider_and_reports_events():
     async def emit(k, d): ev.append((k, d))
     fp = FallbackProvider(lambda m: [Target(a, "m1", "a:m1"), Target(b, "m2", "b:m2")], emit)
     r = asyncio.run(fp.chat([], model="route"))
-    assert r.content == "b:m2" and [k for k, _ in ev] == ["model.failed", "model.fallback"]
+    assert r.content == "b:m2" and r.model == "b:m2" and [k for k, _ in ev] == ["model.failed", "model.fallback"]
     assert "503" in ev[1][1]["failed"][0]
 
 

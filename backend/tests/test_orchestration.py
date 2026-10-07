@@ -104,3 +104,12 @@ def test_unresolved_failure_keeps_review_required():
     assert status["d"] == "REVIEW_REQUIRED"
     assert "task.review_required" in events
     assert status["e"] == "COMPLETED"
+
+
+def test_task_events_carry_model_and_split_tokens_including_fix_rounds():
+    orch, _ = make({"Planner": [PLAN], "Researcher": ["r"], "Architect": ["ar"], "Coder": ["code"],
+                    "Tester": ["VERDICT: FAIL x", "VERDICT: PASS"], "Debugger": ["fixed"], "Reviewer": ["FINAL"]})
+    result = asyncio.run(orch.run("mission"))
+    d = next(t for t in result["tasks"] if t["id"] == "d")
+    # 1 appel Tester + 1 Debugger + 1 re-test = 3 appels de 10 tokens d'entrée / 5 de sortie
+    assert (d["tokens_in"], d["tokens_out"], d["tokens"]) == (30, 15, 45) and d["model"]
