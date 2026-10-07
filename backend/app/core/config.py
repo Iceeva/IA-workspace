@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     jwt_secret: str
     jwt_refresh_secret: str
+    encryption_key: str = ""  # clés AES (séparées par des virgules, la première chiffre) ; sinon dérivée de JWT_SECRET
     access_ttl_min: int = 15
     refresh_ttl_days: int = 14
     cors_origins: str = "http://localhost:4200"

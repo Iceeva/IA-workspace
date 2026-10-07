@@ -11,6 +11,8 @@ class Storage(ABC):
     async def get(self, key: str) -> bytes: ...
     @abstractmethod
     async def delete(self, key: str) -> None: ...
+    @abstractmethod
+    async def exists(self, key: str) -> bool: ...
 
 
 class LocalStorage(Storage):
@@ -32,6 +34,9 @@ class LocalStorage(Storage):
 
     async def delete(self, key):
         self._p(key).unlink(missing_ok=True)
+
+    async def exists(self, key):
+        return self._p(key).is_file()
 
 
 class S3Storage(Storage):
@@ -70,3 +75,14 @@ def make_storage() -> Storage:
         return S3Storage(os.environ["STORAGE_BUCKET"], os.environ["STORAGE_ACCESS_KEY"],
                          os.environ["STORAGE_SECRET_KEY"], os.getenv("STORAGE_ENDPOINT_URL"))
     raise StorageConfigError("STORAGE_PROVIDER doit valoir 's3' ou 'local'")
+
+    async def exists(self, key):
+        import asyncio
+        from botocore.exceptions import ClientError
+        try:
+            await asyncio.to_thread(self.s3.head_object, Bucket=self.bucket, Key=key)
+            return True
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+                return False
+            raise
