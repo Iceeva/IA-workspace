@@ -10,6 +10,7 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install -r backend/requirements.txt
       - run: cd backend && pytest -q
+      - run: PYTHONPATH=backend python bridge/tests/test_bridge.py
   frontend:
     runs-on: ubuntu-latest
     steps:

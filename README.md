@@ -51,6 +51,12 @@ git diff                     # voir ce qui a changé
 Convention de messages : `feat`, `fix`, `docs`, `test`, `chore`, `refactor` + portée entre parenthèses. Le journal des changements est dans `CHANGELOG.md`.
 Pour publier : `git remote add origin <url> && git push -u origin main`.
 
+## Plateforme multi-agents (catalogue, routage, runtimes locaux)
+Catalogue de 1 096 agents, routage de modèles (un seul / par agent / automatique) avec repli, fournisseurs configurables
+à clés chiffrées, budgets, lecture GGUF, Quantization Studio, benchmark, outils avec permissions, et **Local Bridge** pour
+utiliser vos modèles locaux depuis l'application web. Voir `docs/PLATFORM.md` ; l'état exact, section par section, est dans
+`docs/ROADMAP.md` (ce qui est fait, partiel ou à faire).
+
 ## Documentation
 `docs/API.md`, `AGENTS.md`, `SECURITY.md`, `DEPLOYMENT.md`, `DEVELOPMENT.md`, `ARCHITECTURE.md`.
 
