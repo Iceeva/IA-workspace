@@ -3,16 +3,17 @@ import { FormsModule } from '@angular/forms';
 import { DatePipe, JsonPipe } from '@angular/common';
 import { ApiService } from '../../core/api.service';
 import { Toast } from '../../core/toast.service';
+import { WorkflowBuilder } from './workflow-builder';
 
 const SAMPLE = `{
   "nodes": [
-    {"id": "recherche", "type": "agent", "agent": "researcher", "prompt": "Résume : {{input.sujet}}"},
+    {"id": "recherche", "type": "agent", "agent": "researcher", "instruction": "Résume : {{trigger.sujet}}"},
     {"id": "revue", "type": "human", "depends_on": ["recherche"], "message": "Valider le résumé ?"}
   ]
 }`;
 
 @Component({
-  selector: 'app-automations', imports: [FormsModule, DatePipe, JsonPipe],
+  selector: 'app-automations', imports: [FormsModule, DatePipe, JsonPipe, WorkflowBuilder],
   template: `<div class="page-head"><h1>Automatisations</h1></div>
   @if (approvals().length) {
     <section class="panel warn" aria-label="Validations en attente"><h2>Validation humaine requise</h2>
@@ -26,7 +27,10 @@ const SAMPLE = `{
       <button class="btn ghost small" (click)="del(w)">Supprimer</button></div></div> } @empty { <p class="muted">Aucun workflow.</p> }
     <h3>Nouveau workflow</h3>
     <label class="field">Nom<input [(ngModel)]="nf.name"></label>
-    <label class="field">Définition (JSON : séquences, parallélisme, conditions, boucles, validation humaine, HTTP, code…)<textarea rows="9" [(ngModel)]="nf.json" spellcheck="false"></textarea></label>
+    <div class="tabs" role="tablist"><button type="button" class="btn small" [class.ghost]="mode() !== 'visual'" (click)="setMode('visual')">Éditeur visuel</button>
+      <button type="button" class="btn small" [class.ghost]="mode() !== 'json'" (click)="setMode('json')">JSON</button></div>
+    @if (mode() === 'visual') { @if (def()) { <app-workflow-builder [definition]="def()" (changed)="onBuilt($event)" /> } }
+    @else { <label class="field">Définition JSON (séquences, parallélisme, conditions, boucles, validation humaine, HTTP, code…)<textarea rows="9" [(ngModel)]="nf.json" spellcheck="false"></textarea></label> }
     <button class="btn ghost" (click)="validate()">Valider</button> <button class="btn" [disabled]="!nf.name" (click)="create()">Créer</button>
     @if (msg()) { <p class="muted">{{ msg() }}</p> }
   </section>
@@ -49,15 +53,18 @@ const SAMPLE = `{
       @if (r.status === 'RUNNING' || r.status === 'PENDING') { <button class="btn ghost small" (click)="cancel(r)">Annuler</button> }</div> } @empty { <p class="muted">Aucune exécution.</p> }
   </section>`,
   styles: [`.row { display: flex; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--rule); padding: .6rem 0; align-items: center; }
-    .warn { border-color: #b45309; margin-bottom: 1.5rem; } textarea { font-family: monospace; font-size: .85rem; width: 100%; } .status { font-weight: 600; margin-right: .5rem; }`],
+    .warn { border-color: #b45309; margin-bottom: 1.5rem; }   .tabs { display: flex; gap: .4rem; margin-bottom: 1rem; } textarea { font-family: monospace; font-size: .85rem; width: 100%; } .status { font-weight: 600; margin-right: .5rem; }`],
 })
 export class Automations implements OnDestroy {
   private api = inject(ApiService); private toast = inject(Toast);
   workflows = signal<any[]>([]); runs = signal<any[]>([]); approvals = signal<any[]>([]); triggers = signal<any[]>([]);
+  mode = signal<'visual' | 'json'>('visual'); def = signal<any>(null);
   current = signal<any>(null); secret = signal(''); msg = signal('');
   nf = { name: '', json: SAMPLE }; tr: any = { type: 'schedule', cron: '0 8 * * *', event: 'file_added' };
   private timer = setInterval(() => this.poll(), 5000);
-  constructor() { this.load(); this.poll(); }
+  constructor() { this.load(); this.poll(); this.def.set(JSON.parse(SAMPLE)); }
+  setMode(m: 'visual' | 'json') { if (m === 'visual') { try { this.def.set(null); const d = JSON.parse(this.nf.json); queueMicrotask(() => this.def.set(d)); } catch { this.msg.set('JSON invalide : corrigez-le avant de passer à l’éditeur'); return; } } this.mode.set(m); }
+  onBuilt(d: any) { this.nf.json = JSON.stringify(d, null, 2); }
   ngOnDestroy() { clearInterval(this.timer); }
   load() { this.api.get<any[]>('/api/workflows').subscribe(r => this.workflows.set(r.data)); }
   poll() { this.api.get<any[]>('/api/approvals').subscribe(r => this.approvals.set(r.data)); this.api.get<any[]>('/api/workflow-runs').subscribe(r => this.runs.set(r.data)); }
@@ -65,7 +72,11 @@ export class Automations implements OnDestroy {
   private parse() { try { return JSON.parse(this.nf.json); } catch { this.msg.set('JSON invalide'); return null; } }
   validate() { const d = this.parse(); if (d) this.api.post('/api/workflows/validate', d).subscribe({ next: () => this.msg.set('Définition valide'), error: e => this.msg.set(e?.error?.error?.message ?? 'Invalide') }); }
   create() { const d = this.parse(); if (d) this.api.post('/api/workflows', { name: this.nf.name, definition: d }).subscribe({ next: () => { this.toast.info('Workflow créé'); this.load(); }, error: this.err }); }
-  run(w: any) { this.api.post(`/api/workflows/${w.id}/run`, { payload: {} }).subscribe({ next: () => { this.toast.info('Workflow lancé'); this.poll(); }, error: this.err }); }
+  run(w: any) {
+    const raw = prompt('Données d’entrée du workflow (JSON, accessibles via {{trigger.clé}})', '{}'); if (raw === null) return;
+    let payload: any; try { payload = JSON.parse(raw || '{}'); } catch { this.toast.error('JSON invalide'); return; }
+    this.api.post(`/api/workflows/${w.id}/run`, { payload }).subscribe({ next: () => { this.toast.info('Workflow lancé'); this.poll(); }, error: this.err });
+  }
   del(w: any) { if (confirm(`Supprimer « ${w.name} » ?`)) this.api.delete(`/api/workflows/${w.id}`).subscribe(() => { this.load(); if (this.current()?.id === w.id) this.current.set(null); }); }
   open(w: any) { this.current.set(w); this.secret.set(''); this.loadTriggers(); }
   loadTriggers() { this.api.get<any[]>(`/api/workflows/${this.current().id}/triggers`).subscribe(r => this.triggers.set(r.data)); }

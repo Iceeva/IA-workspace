@@ -1,7 +1,7 @@
 import { Component, computed, inject, OnInit } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { LucideAngularModule, LayoutDashboard, Boxes, FolderGit2, Bot, ListChecks, Activity, MessageSquare, Files,
-  Code2, Brain, Workflow, Gauge, Settings, ShieldCheck, Sun, Moon, Monitor, LogOut, Zap, Store, Users, Plug, Cpu, Scale } from 'lucide-angular';
+  Code2, Brain, Workflow, Gauge, Settings, ShieldCheck, Sun, Moon, Monitor, LogOut, Zap, Store, Users, Plug, Cpu, Scale, HardDrive, Timer, Radar, Lock } from 'lucide-angular';
 import { AuthService } from '../../core/auth.service';
 import { ThemeService } from '../../core/theme.service';
 
@@ -64,7 +64,9 @@ export class Shell implements OnInit {
     { path: '/workflows', label: 'Workflows', icon: Workflow },
     { path: '/automations', label: 'Automatisations', icon: Zap }, { path: '/marketplace', label: 'Marketplace', icon: Store },
     { path: '/teams', label: 'Équipes', icon: Users }, { path: '/providers', label: 'Fournisseurs', icon: Plug },
-    { path: '/runtimes', label: 'Runtimes locaux', icon: Cpu }, { path: '/quantization', label: 'Quantification', icon: Scale }, { path: '/usage', label: 'Usage', icon: Gauge },
+    { path: '/runtimes', label: 'Runtimes locaux', icon: Cpu }, { path: '/quantization', label: 'Quantification', icon: Scale },
+    { path: '/local-models', label: 'Modèles locaux', icon: HardDrive }, { path: '/benchmarks', label: 'Benchmarks', icon: Timer },
+    { path: '/monitoring', label: 'Monitoring', icon: Radar }, { path: '/security', label: 'Sécurité', icon: Lock }, { path: '/usage', label: 'Usage', icon: Gauge },
     { path: '/settings', label: 'Paramètres', icon: Settings },
   ];
   links = computed(() => this.auth.me()?.is_platform_admin ? [...this.all, { path: '/admin', label: 'Administration', icon: ShieldCheck }] : this.all);

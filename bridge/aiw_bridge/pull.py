@@ -3,6 +3,7 @@ et les exécute sur les runtimes LOCAUX. Le serveur ne peut demander que du chat
 aucune URL, aucun chemin de fichier, aucune commande n'est jamais acceptée dans une tâche."""
 from __future__ import annotations
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -25,6 +26,10 @@ def default_http(method: str, url: str, headers: dict, body: bytes | None, timeo
         return e.code, e.read(100_000)
 
 
+_IMG = re.compile(r"^data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$")
+MAX_IMAGE_CHARS = 16 * 1024 * 1024
+
+
 class PullError(ValueError):
     pass
 
@@ -35,11 +40,26 @@ def validate_job(job: dict) -> dict:
     msgs = job.get("messages")
     if not isinstance(msgs, list) or not msgs or not isinstance(job.get("model"), str) or not job["model"]:
         raise PullError("Tâche de chat invalide")
-    total = 0
+    total, img_chars = 0, 0
     for m in msgs:
-        if not isinstance(m, dict) or m.get("role") not in ROLES or not isinstance(m.get("content"), str):
+        if not isinstance(m, dict) or m.get("role") not in ROLES:
             raise PullError("Message invalide")
-        total += len(m["content"])
+        c = m.get("content")
+        if isinstance(c, str):
+            total += len(c)
+            continue
+        if not isinstance(c, list) or not c or len(c) > 9:
+            raise PullError("Message invalide")
+        for part in c:   # multimodal : uniquement du texte et des images data: aux formats courants, rien d'autre
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                total += len(part["text"])
+            elif (isinstance(part, dict) and part.get("type") == "image_url" and isinstance(part.get("image_url"), dict)
+                  and isinstance(part["image_url"].get("url"), str) and _IMG.match(part["image_url"]["url"])):
+                img_chars += len(part["image_url"]["url"])
+            else:
+                raise PullError("Contenu de message non pris en charge")
+    if img_chars > MAX_IMAGE_CHARS:
+        raise PullError("Images trop volumineuses")
     if total > MAX_TOTAL_CHARS:
         raise PullError("Tâche trop volumineuse")
     if isinstance(job.get("deadline"), (int, float)) and job["deadline"] < time.time():

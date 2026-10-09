@@ -51,3 +51,42 @@ connecte au serveur et vient chercher les tâches) — voir `docs/ROADMAP.md`.
 - Les URL de fournisseurs sont validées (HTTPS, adresses publiques) ; `ALLOW_PRIVATE_PROVIDER_URLS=true` uniquement en auto-hébergement.
   Une protection DNS-rebinding complète demande un filtrage réseau en sortie côté infrastructure.
 - La détection de runtimes locaux n'est volontairement PAS exposée par l'API cloud (SSRF) : elle vit dans le bridge.
+
+## Control Plane / Execution Plane (§44)
+
+| | Control Plane | Execution Plane |
+|---|---|---|
+| Contenu | Interface Angular, authentification, API FastAPI, configuration (fournisseurs, agents, workflows, budgets), historique, audit | Worker (orchestrateur, agents, workflows), sandbox Docker, runtimes de modèles, Local Bridge |
+| Où | Vercel (frontend statique + `backend/api/index.py` pour l'API légère) ou Docker Compose | Docker Compose, VM/conteneur de worker, machine de l'utilisateur |
+| Lien | PostgreSQL (+ pgvector) et Redis partagés | Le worker lit la file Redis ; le bridge **appelle le serveur** (mode pull) |
+
+Règles : aucune fonction Vercel ne charge de modèle ni n'exécute de code utilisateur ; les tâches longues passent par la file ;
+un modèle local n'est joignable que par le bridge de l'utilisateur, qui initie la connexion (aucun port à ouvrir).
+
+## Protocole inter-agents (§38) et replanification (§3)
+
+Un agent peut insérer dans sa réponse un bloc ```` ```aiw-msg {"type":"request_agent","agent":"<id>","reason":"…"} ``` ````
+(types : `result`, `request_info`, `request_analysis`, `request_agent`, `error`, `request_validation`, `done`).
+L'orchestrateur retire le bloc du texte, journalise le message (événement `agent.message`) et, pour `request_agent` /
+`request_analysis`, ajoute une tâche dépendante (`plan.replanned`). Bornes : 3 replanifications par exécution, agents
+du pool/catalogue uniquement (jamais `planner` ni `debugger`) ; refus journalisés (`plan.replan_refused`).
+
+## Multimodal (§16-§18)
+
+`POST /api/multimodal/prepare` (multipart : `text`, `files[]`) : audio → transcription (variable `STT_URL`, Phonon ou serveur
+compatible `/v1/audio/transcriptions`) ; image → modèle de vision choisi par le routeur (capacité `vision`). Le résultat est une
+mission enrichie, avec les contenus extraits dans des balises `<attachment>` traitées comme des données.
+Génération d'image : `HttpRuntime.generate_image` (Sana ou compatible `/v1/images/generations`). **Les protocoles réels de Phonon
+et Sana n'ont pas été vérifiés** : adaptez `SttSpec`/`ImageSpec`.
+
+## Stockage et RAG
+
+Les fichiers utilisateur sont stockés par contenu (`cas:<hmac>`) : dédupliqués par organisation, compressés (zstd) puis chiffrés
+(AES-256-GCM) ; les objets créés avant ce changement restent lisibles (clé héritée). Un objet partagé n'est supprimé que lorsqu'il
+n'est plus référencé. Le RAG pré-sélectionne côté PostgreSQL (pgvector `<=>` + plein texte) puis classe par RRF ; sans pgvector il
+retombe sur le calcul en Python. Les embeddings sont en JSON (dimension variable) : pas d'index vectoriel tant qu'un modèle
+d'embedding unique n'est pas fixé (colonne `vector(N)` + HNSW alors recommandés).
+
+## Application de bureau
+
+`frontend/src-tauri` (Tauri 2) : voir son README. Non compilée là où elle a été écrite.

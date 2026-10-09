@@ -2,7 +2,7 @@
 from __future__ import annotations
 import time
 
-from app.llm.base import LLMError, LLMProvider, LLMResponse
+from app.llm.base import openai_content, LLMError, LLMProvider, LLMResponse
 from .broker import BridgeTimeout, JobBroker
 
 MAX_TOKENS_CAP = 8192
@@ -19,7 +19,7 @@ class BridgeProvider(LLMProvider):
             raise LLMError("Local Bridge hors ligne : lancez-le sur votre machine (voir docs/PLATFORM.md)")
         jid = await self.broker.submit(self.scope, {
             "type": "chat", "deadline": time.time() + self.timeout_s, "model": model, "temperature": temperature, "max_tokens": min(max_tokens, MAX_TOKENS_CAP),
-            "messages": [{"role": m.role, "content": m.content} for m in messages]})
+            "messages": [{"role": m.role, "content": openai_content(m)} for m in messages]})
         try:
             res = await self.broker.wait_result(jid, self.timeout_s)
         except BridgeTimeout as e:

@@ -135,6 +135,19 @@ def test_media_passthrough_routes_to_declared_runtime():
     finally:
         srv.shutdown(); up.shutdown()
 
+def test_job_accepts_data_images_only():
+    from aiw_bridge.pull import PullError, validate_job
+    ok_part = {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}}
+    job = {"type": "chat", "id": "1", "model": "m", "messages": [{"role": "user", "content": [{"type": "text", "text": "x"}, ok_part]}]}
+    assert validate_job(job)["messages"][0]["content"][1] == ok_part
+    for bad_url in ("https://evil.example/x.png", "file:///etc/passwd", "data:text/html;base64,QUJD", "data:image/svg+xml;base64,QUJD"):
+        bad = {**job, "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": bad_url}}]}]}
+        try: validate_job(bad); assert False, bad_url
+        except PullError: pass
+    for bad_content in ([], [{"type": "tool", "x": 1}], "x"*0 or [{"type": "text"}]):
+        try: validate_job({**job, "messages": [{"role": "user", "content": bad_content}]}); assert False
+        except PullError: pass
+
 
 if __name__ == "__main__":
     for n, f in list(globals().items()):
