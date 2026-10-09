@@ -27,10 +27,16 @@ class _OpenAICompatible(LLMProvider):
             raise LLMConfigError(f"{self.key_env} est requis pour le provider '{self.name}'")
         return key
 
-    async def chat(self, messages, *, model, temperature=0.2, max_tokens=4096) -> LLMResponse:
+    def _chat_url(self, model: str) -> str:
+        return f"{self._base_url()}/chat/completions"
+
+    def _headers(self) -> dict:
         key = self._key()
-        headers = {"Authorization": f"Bearer {key}"} if key else {}
-        data = await _post(f"{self._base_url()}/chat/completions", headers, {
+        return {"Authorization": f"Bearer {key}"} if key else {}
+
+    async def chat(self, messages, *, model, temperature=0.2, max_tokens=4096) -> LLMResponse:
+        headers = self._headers()
+        data = await _post(self._chat_url(model), headers, {
             "model": model, "temperature": temperature, "max_tokens": max_tokens,
             "messages": [{"role": m.role, "content": m.content} for m in messages]})
         try:
@@ -43,14 +49,13 @@ class _OpenAICompatible(LLMProvider):
 
     async def stream(self, messages, *, model, temperature=0.2, max_tokens=4096):
         import httpx
-        key = self._key()
-        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        headers = self._headers()
         payload = {"model": model, "temperature": temperature, "max_tokens": max_tokens, "stream": True,
                    "stream_options": {"include_usage": True},
                    "messages": [{"role": m.role, "content": m.content} for m in messages]}
         text, usage = [], {}
         async with httpx.AsyncClient(timeout=120.0) as client:
-            async with client.stream("POST", f"{self._base_url()}/chat/completions", headers=headers, json=payload) as r:
+            async with client.stream("POST", self._chat_url(model), headers=headers, json=payload) as r:
                 if r.status_code >= 400:
                     raise LLMError(f"HTTP {r.status_code}: {(await r.aread()).decode()[:300]}")
                 async for line in r.aiter_lines():
@@ -109,6 +114,79 @@ class AnthropicProvider(LLMProvider):
         return LLMResponse(text, model, u.get("input_tokens", 0), u.get("output_tokens", 0), data)
 
 
+class AzureOpenAIProvider(_OpenAICompatible):
+    """Azure OpenAI : l'URL contient le *déploiement* (passé dans `model`), l'authentification est l'en-tête `api-key`."""
+
+    def __init__(self, endpoint: str, api_key: str, api_version: str = "2024-10-21"):
+        self.name, self.base_url, self._api_key, self.api_version = "azure", endpoint.rstrip("/"), api_key, api_version
+
+    def _chat_url(self, model: str) -> str:
+        from urllib.parse import quote
+        return f"{self.base_url}/openai/deployments/{quote(model, safe='')}/chat/completions?api-version={self.api_version}"
+
+    def _headers(self) -> dict:
+        return {"api-key": self._api_key}
+
+
+class BedrockProvider(LLMProvider):
+    """AWS Bedrock via l'API Converse (même format pour tous les modèles compatibles). Le paquet boto3 est requis.
+    `credentials` : « ACCESS_KEY:SECRET_KEY[:SESSION_TOKEN] » (ou None pour la chaîne d'identifiants AWS par défaut)."""
+    name = "bedrock"
+
+    def __init__(self, region: str, credentials: str | None = None, client=None):
+        self.region, self.credentials, self._client = region, credentials, client
+
+    def _get_client(self):
+        if self._client is None:
+            try:
+                import boto3
+            except ImportError as e:
+                raise LLMConfigError("Le paquet boto3 est requis pour Bedrock") from e
+            kw = {}
+            if self.credentials:
+                parts = self.credentials.split(":")
+                if len(parts) < 2:
+                    raise LLMConfigError("Identifiants Bedrock : ACCESS_KEY:SECRET_KEY[:SESSION_TOKEN]")
+                kw = {"aws_access_key_id": parts[0], "aws_secret_access_key": parts[1],
+                      **({"aws_session_token": parts[2]} if len(parts) > 2 else {})}
+            self._client = boto3.client("bedrock-runtime", region_name=self.region, **kw)
+        return self._client
+
+    @staticmethod
+    def to_converse(messages) -> tuple[list[dict], list[dict]]:
+        """(system, messages) : Converse exige user/assistant en alternance en commençant par user."""
+        system = [{"text": m.content} for m in messages if m.role == "system"]
+        out: list[dict] = []
+        for m in messages:
+            if m.role == "system":
+                continue
+            if out and out[-1]["role"] == m.role:
+                out[-1]["content"][0]["text"] += "\n\n" + m.content
+            else:
+                out.append({"role": m.role, "content": [{"text": m.content}]})
+        if not out or out[0]["role"] != "user":
+            out.insert(0, {"role": "user", "content": [{"text": "(début de conversation)"}]})
+        return system, out
+
+    async def chat(self, messages, *, model, temperature=0.2, max_tokens=4096) -> LLMResponse:
+        import asyncio
+        client = self._get_client()
+        system, msgs = self.to_converse(messages)
+        kw = {"modelId": model, "messages": msgs, "inferenceConfig": {"maxTokens": max_tokens, "temperature": temperature}}
+        if system:
+            kw["system"] = system
+        try:
+            resp = await asyncio.to_thread(client.converse, **kw)
+        except Exception as e:  # noqa: BLE001 — botocore lève des erreurs variées (ClientError, réseau…)
+            raise LLMError(f"Bedrock : {str(e)[:300]}") from e
+        try:
+            text = "".join(b.get("text", "") for b in resp["output"]["message"]["content"])
+        except (KeyError, TypeError) as e:
+            raise LLMError("Réponse Bedrock inattendue") from e
+        u = resp.get("usage", {})
+        return LLMResponse(text, model, u.get("inputTokens", 0), u.get("outputTokens", 0))
+
+
 class GenericOpenAIProvider(_OpenAICompatible):
     """Tout serveur compatible OpenAI (Mistral, DeepSeek, xAI, Groq, Together, Fireworks, LM Studio, vLLM,
     llama.cpp server, LocalAI, Ollama…). L'URL et la clé viennent de la configuration, pas de l'environnement."""
@@ -138,13 +216,25 @@ PRESETS: dict[str, dict] = {
     "localai": {"base_url": "http://localhost:8080/v1", "needs_key": False},
     "vllm": {"base_url": "http://localhost:8000/v1", "needs_key": False},
     "custom": {"base_url": "", "needs_key": False},
+    "azure": {"base_url": "", "needs_key": True, "options": ["api_version"]},   # URL = https://<ressource>.openai.azure.com
+    "bedrock": {"base_url": "", "needs_key": False, "options": ["region"]},     # identifiants optionnels (chaîne AWS)
 }
 
 
-def build_provider(kind: str, base_url: str | None = None, api_key: str | None = None) -> LLMProvider:
+def build_provider(kind: str, base_url: str | None = None, api_key: str | None = None,
+                   options: dict | None = None) -> LLMProvider:
     """Instancie un fournisseur depuis sa configuration (clé déjà déchiffrée, jamais journalisée)."""
+    options = options or {}
     if kind == "anthropic":
         return AnthropicProvider(api_key)
+    if kind == "azure":
+        if not base_url or not api_key:
+            raise LLMConfigError("Azure OpenAI exige l'URL de la ressource et une clé API")
+        return AzureOpenAIProvider(base_url, api_key, options.get("api_version") or "2024-10-21")
+    if kind == "bedrock":
+        if not options.get("region"):
+            raise LLMConfigError("Bedrock exige l'option « region » (ex. us-east-1)")
+        return BedrockProvider(options["region"], api_key)
     preset = PRESETS.get(kind)
     if preset is None:
         raise LLMConfigError(f"Type de fournisseur inconnu: {kind}")

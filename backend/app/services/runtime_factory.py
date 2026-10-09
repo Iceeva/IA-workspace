@@ -20,6 +20,7 @@ class ProviderCfg:
     enabled: bool = True
     priority: int = 100             # plus petit = essayé en premier pour les identifiants bruts
     local: bool = False
+    options: dict = field(default_factory=dict)  # api_version (Azure), region (Bedrock)…
 
 
 @dataclass
@@ -56,7 +57,7 @@ def build_runtime(cfgs: list[ProviderCfg], prefs: RoutingPrefs | None = None, on
     if not cfgs:
         return None
     prefs = prefs or RoutingPrefs()
-    providers = {c.name: build_provider(c.kind, c.base_url, c.api_key) for c in cfgs}
+    providers = {c.name: build_provider(c.kind, c.base_url, c.api_key, c.options) for c in cfgs}
     registry = ModelRegistry(_model(c, m) for c in cfgs for m in c.models)
     router = ModelRouter(registry)
 
