@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     smtp_from: str = "no-reply@ai-workspace.local"
     auth_rate_per_min: int = 20
     sandbox_enabled: bool = False
+    search_url: str = ""        # instance SearXNG (ex. http://searxng:8080/search) pour l'outil web_search
+    github_token: str = ""      # jeton en lecture seule pour l'outil github (facultatif)
+    deploy_hooks: str = ""      # JSON {"nom": "https://…hook"} pour l'outil deploy
 
     @property
     def cors_list(self) -> list[str]:

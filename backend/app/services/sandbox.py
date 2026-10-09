@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 IMAGES = {"python": ("python:3.12-slim", ["python", "/work/main.py"], "main.py"),
-          "node": ("node:22-slim", ["node", "/work/main.js"], "main.js")}
+          "node": ("node:22-slim", ["node", "/work/main.js"], "main.js"),
+          "shell": ("python:3.12-slim", ["sh", "/work/main.sh"], "main.sh")}  # terminal ISOLÉ : jamais l'hôte
 
 
 class SandboxUnavailable(RuntimeError):

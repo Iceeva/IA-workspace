@@ -21,8 +21,8 @@ def run(c): return asyncio.run(c)
 
 def test_agent_only_sees_granted_available_tools():
     with tempfile.TemporaryDirectory() as d:
-        b = box(d, {"filesystem": Permission.READ, "terminal": Permission.EXECUTE, "git": Permission.NONE})
-        assert b.visible_tools() == ["filesystem"]       # terminal : prévu mais non implémenté ; git : NONE
+        b = box(d, {"filesystem": Permission.READ, "terminal": Permission.EXECUTE, "git": Permission.NONE, "zzz": Permission.READ})
+        assert b.visible_tools() == ["filesystem", "terminal"]     # git : NONE ; zzz : outil inexistant
 
 
 def test_permission_levels_are_enforced_and_audited():
@@ -34,7 +34,7 @@ def test_permission_levels_are_enforced_and_audited():
             assert "WRITE" in str(e) and "READ" in str(e)
         assert log[0][0] == "tool.denied" and not (Path(d) / "a.txt").exists()
         try:
-            run(b.call("github", "x")); assert False
+            run(b.call("nope", "x")); assert False
         except ToolError as e:
             assert "indisponible" in str(e)
         try:
@@ -141,5 +141,4 @@ def test_catalog_tool_references_are_known_to_the_registry():
     reg = default_registry(".")
     used = {t for a in Catalog.default() for t, _ in a.tools}
     assert used <= {t.name for t in reg.all()}, used - {t.name for t in reg.all()}
-    planned = sorted(used - reg.available())
-    assert planned == ["browser", "terminal", "web_search"]   # écart connu et documenté (docs/ROADMAP.md)
+    assert used <= reg.available()

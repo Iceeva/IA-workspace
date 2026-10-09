@@ -1,4 +1,4 @@
-"""Outils intégrés. Tous sont confinés ; les outils non encore implémentés sont déclarés `planned`."""
+"""Outils intégrés. Tous sont confinés ; les actions à effet de bord exigent une validation humaine."""
 from __future__ import annotations
 import ast
 import asyncio
@@ -129,16 +129,20 @@ def python_tool() -> ToolDef:
                       description="Exécuter du code (validation humaine)")})
 
 
-PLANNED = {"terminal": "Terminal (shell)", "browser": "Navigateur", "web_search": "Recherche web",
-           "github": "GitHub", "database": "Base de données", "http": "Appels HTTP", "email": "E-mail",
-           "pdf": "Traitement PDF", "image": "Traitement d'images", "deploy": "Déploiement", "javascript": "JavaScript",
-           "automation": "Automatisation"}
-
-
-def default_registry(workspace_root: str | Path = ".") -> ToolRegistry:
+def default_registry(workspace_root: str | Path = ".", *, search_url: str = "", github_token: str = "",
+                     deploy_hooks: dict[str, str] | None = None, run_workflow=None, rag_search=None) -> ToolRegistry:
+    """Registre complet. Les outils qui exigent une configuration (recherche web, déploiement, RAG, automatisation)
+    existent toujours mais répondent par une erreur explicite tant qu'ils ne sont pas configurés."""
+    from . import extra
     reg = ToolRegistry()
-    for t in (filesystem_tool(workspace_root), calculator_tool(), git_tool(workspace_root), python_tool()):
+    for t in (filesystem_tool(workspace_root), calculator_tool(), git_tool(workspace_root), python_tool(),
+              extra.terminal_tool(), extra.javascript_tool(), extra.http_tool(), extra.browser_tool(),
+              extra.web_search_tool(search_url), extra.github_tool(github_token), extra.database_tool(workspace_root),
+              extra.email_tool(), extra.pdf_tool(workspace_root), extra.image_tool(workspace_root),
+              extra.deploy_tool(deploy_hooks or {})):
         reg.register(t)
-    for name, desc in PLANNED.items():
-        reg.register(ToolDef(name, desc, {}, status="planned"))
+    if run_workflow:
+        reg.register(extra.automation_tool(run_workflow))
+    if rag_search:
+        reg.register(extra.rag_tool(rag_search))
     return reg
