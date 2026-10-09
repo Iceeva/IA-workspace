@@ -17,6 +17,25 @@ class LLMError(RuntimeError):
 class Message:
     role: str  # system | user | assistant
     content: str
+    images: tuple = ()   # ((mime, base64), …) : entrée visuelle pour les modèles multimodaux (§16)
+
+
+ALLOWED_IMAGE_MIMES = ("image/png", "image/jpeg", "image/webp", "image/gif")
+
+
+def openai_content(m: "Message"):
+    """Contenu au format OpenAI : texte simple, ou liste de parties si le message porte des images."""
+    if not m.images:
+        return m.content
+    return [{"type": "text", "text": m.content},
+            *({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}} for mime, b64 in m.images)]
+
+
+def anthropic_content(m: "Message"):
+    if not m.images:
+        return m.content
+    return [*({"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}} for mime, b64 in m.images),
+            {"type": "text", "text": m.content}]
 
 
 @dataclass

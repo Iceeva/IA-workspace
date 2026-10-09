@@ -66,3 +66,13 @@ class TaskGraph:
     def upstream_outputs(self, node: TaskNode) -> str:
         return "\n\n".join(f"### {self.nodes[d].title} ({self.nodes[d].agent})\n{self.nodes[d].output}"
                            for d in node.depends_on)
+
+    def add(self, node: TaskNode) -> None:
+        """Ajout dynamique (replanification) ; refuse les doublons, les dépendances inconnues et les cycles."""
+        if node.id in self.nodes:
+            raise GraphError(f"Identifiant de tâche dupliqué: {node.id}")
+        for d in node.depends_on:
+            if d not in self.nodes:
+                raise GraphError(f"La tâche '{node.id}' dépend de '{d}', qui n'existe pas")
+        self.nodes[node.id] = node
+        self.layers()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json
 import os
-from .base import LLMConfigError, LLMError, LLMProvider, LLMResponse, Message
+from .base import LLMConfigError, LLMError, LLMProvider, LLMResponse, Message, anthropic_content, openai_content
 
 
 async def _post(url: str, headers: dict, payload: dict, timeout: float = 120.0) -> dict:
@@ -38,7 +38,7 @@ class _OpenAICompatible(LLMProvider):
         headers = self._headers()
         data = await _post(self._chat_url(model), headers, {
             "model": model, "temperature": temperature, "max_tokens": max_tokens,
-            "messages": [{"role": m.role, "content": m.content} for m in messages]})
+            "messages": [{"role": m.role, "content": openai_content(m)} for m in messages]})
         try:
             usage = data.get("usage", {})
             return LLMResponse(data["choices"][0]["message"]["content"], model,
@@ -52,7 +52,7 @@ class _OpenAICompatible(LLMProvider):
         headers = self._headers()
         payload = {"model": model, "temperature": temperature, "max_tokens": max_tokens, "stream": True,
                    "stream_options": {"include_usage": True},
-                   "messages": [{"role": m.role, "content": m.content} for m in messages]}
+                   "messages": [{"role": m.role, "content": openai_content(m)} for m in messages]}
         text, usage = [], {}
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream("POST", self._chat_url(model), headers=headers, json=payload) as r:
@@ -104,7 +104,7 @@ class AnthropicProvider(LLMProvider):
                            {"x-api-key": key, "anthropic-version": "2023-06-01"},
                            {"model": model, "max_tokens": max_tokens, "temperature": temperature,
                             "system": system,
-                            "messages": [{"role": m.role, "content": m.content}
+                            "messages": [{"role": m.role, "content": anthropic_content(m)}
                                          for m in messages if m.role != "system"]})
         try:
             text = "".join(b["text"] for b in data["content"] if b.get("type") == "text")
@@ -163,7 +163,9 @@ class BedrockProvider(LLMProvider):
             if out and out[-1]["role"] == m.role:
                 out[-1]["content"][0]["text"] += "\n\n" + m.content
             else:
-                out.append({"role": m.role, "content": [{"text": m.content}]})
+                imgs = [{"image": {"format": mime.split("/")[1].replace("jpeg", "jpeg"), "source": {"bytes": __import__("base64").b64decode(b64)}}}
+                        for mime, b64 in m.images]
+                out.append({"role": m.role, "content": [*imgs, {"text": m.content}]})
         if not out or out[0]["role"] != "user":
             out.insert(0, {"role": "user", "content": [{"text": "(début de conversation)"}]})
         return system, out

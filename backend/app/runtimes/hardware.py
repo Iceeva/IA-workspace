@@ -142,3 +142,45 @@ def recommend(profile: HardwareProfile, candidates: list[dict]) -> list[dict]:
     order = {"gpu_full": 0, "gpu_partial": 1, "cpu": 2, "too_large": 3}
     out = [{**c, "fit": fit(profile, c["memory_needed_gb"])} for c in candidates]
     return sorted(out, key=lambda c: (order[c["fit"]], -c["memory_needed_gb"]))
+
+
+def profile_from_dict(d: dict) -> HardwareProfile:
+    """Reconstruit un profil envoyé par le navigateur (relevé par le bridge). Valeurs bornées : c'est une donnée client."""
+    def num(k, hi, default=0):
+        try:
+            return max(0, min(int(d.get(k, default) or default), hi))
+        except (TypeError, ValueError):
+            return default
+    gpus = []
+    for g in (d.get("gpus") or [])[:8]:
+        if isinstance(g, dict):
+            gpus.append(GPU(str(g.get("name", "GPU"))[:80], num_of(g, "vram_mb"), str(g.get("vendor", "unknown"))[:20],
+                            bool(g.get("unified_memory", False))))
+    avail = d.get("ram_available_mb")
+    return HardwareProfile(
+        os=str(d.get("os", ""))[:20], os_version=str(d.get("os_version", ""))[:40], arch=str(d.get("arch", ""))[:20],
+        cpu=str(d.get("cpu", ""))[:80], threads=num("threads", 4096), ram_total_mb=num("ram_total_mb", 16_000_000),
+        ram_available_mb=None if avail is None else num("ram_available_mb", 16_000_000),
+        disk_free_gb=float(min(max(float(d.get("disk_free_gb", 0) or 0), 0), 1e7)), gpus=gpus,
+        acceleration=[str(a)[:20] for a in (d.get("acceleration") or [])[:8]])
+
+
+def num_of(g: dict, k: str) -> int:
+    try:
+        return max(0, min(int(g.get(k, 0) or 0), 4_000_000))
+    except (TypeError, ValueError):
+        return 0
+
+
+SIZES_B = (1, 3, 7, 8, 14, 32, 70)
+
+
+def recommend_models(profile: HardwareProfile, ctx_len: int = 4096, formats=("Q4_K_M", "Q8_0")) -> list[dict]:
+    """Quelles tailles de modèle (paramètres × quantification) tiennent sur cette machine, du meilleur ajustement au pire."""
+    from . import quantization as Q
+    cands = []
+    for b in SIZES_B:
+        for r in Q.compare(float(b), ctx_len, list(formats)):
+            cands.append({"name": f"{b}B {r.fmt}", "params_b": b, "format": r.fmt, "memory_needed_gb": r.memory_gb,
+                          "quality": r.quality})
+    return recommend(profile, cands)

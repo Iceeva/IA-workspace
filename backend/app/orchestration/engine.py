@@ -6,6 +6,7 @@ import re
 from typing import Awaitable, Callable
 
 from app.agents.base import BaseAgent
+from app.agents.protocol import DELEGATING, MessageLog, MsgType, parse_messages, protocol_instructions
 from app.agents.roles import ROLES, build_agent
 from app.llm.base import LLMProvider
 from .graph import GraphError, TaskGraph, TaskNode, TaskStatus
@@ -70,7 +71,7 @@ class Orchestrator:
     def __init__(self, provider: LLMProvider, model: str, emit: EventSink,
                  is_cancelled: CancelCheck | None = None, max_fix_rounds: int = 2,
                  agent_overrides: dict[str, dict] | None = None, selector=None, resolve_agent=None,
-                 route_for=None, toolbox_for=None):
+                 route_for=None, toolbox_for=None, max_replans: int = 3):
         """selector : AgentSelector (choisit la short-list du catalogue) ; resolve_agent(id) → AgentDef ;
         route_for(AgentDef) → clé de modèle ; toolbox_for(AgentDef) → ToolBox | None (outils de CET agent)."""
         self.selector, self.resolve_agent, self.route_for, self.toolbox_for = selector, resolve_agent, route_for, toolbox_for
@@ -80,6 +81,8 @@ class Orchestrator:
         self.max_fix_rounds = max_fix_rounds
         self.overrides = agent_overrides or {}
         self.total_tokens = 0
+        self.max_replans, self.replans = max_replans, 0
+        self.log = MessageLog()
 
     def _catalog_agent(self, role: str):
         return self.resolve_agent(role) if self.resolve_agent and role not in ROLES else None
@@ -128,12 +131,16 @@ class Orchestrator:
         if preset:
             await self.emit("plan.created", {"source": "workflow", "tasks": len(graph.nodes)})
         await self.emit("graph", {"nodes": [self._dump(n) for n in graph.nodes.values()]})
-        for layer in graph.layers():
+        while True:  # ordonnancement dynamique : le graphe peut grandir (replanification, §3)
             if await self.is_cancelled():
                 self._cancel_rest(graph)
                 raise ExecutionCancelled()
-            await asyncio.gather(*(self._run_node(n, graph, mission) for n in layer))
-            failed = [n for n in layer if n.status is TaskStatus.FAILED]
+            done = {i for i, n in graph.nodes.items() if n.status in (TaskStatus.COMPLETED, TaskStatus.REVIEW_REQUIRED)}
+            ready = [n for n in graph.nodes.values() if n.status is TaskStatus.PENDING and set(n.depends_on) <= done]
+            if not ready:
+                break
+            await asyncio.gather(*(self._run_node(n, graph, mission) for n in ready))
+            failed = [n for n in ready if n.status is TaskStatus.FAILED]
             if failed:
                 self._cancel_rest(graph)
                 raise RuntimeError(f"Tâche en échec: {failed[0].title}: {failed[0].error}")
@@ -148,7 +155,9 @@ class Orchestrator:
         try:
             agent = self._agent(node.agent)
             ctx = f"Mission: {mission}\n\n{graph.upstream_outputs(node)}"
-            res = await agent.run(node.title, ctx)
+            hint = protocol_instructions(self._requestable()) if self.replans < self.max_replans else ""
+            res = await agent.run(node.title + hint, ctx)
+            res.output = await self._handle_messages(node, graph, res.output)
             node.output, node.tokens, node.duration_ms = res.output, res.tokens, res.duration_ms
             node.tokens_in, node.tokens_out, node.model = res.tokens_in, res.tokens_out, res.model
             self.total_tokens += res.tokens
@@ -165,6 +174,35 @@ class Orchestrator:
         except Exception as e:  # noqa: BLE001 — l'erreur est remontée via l'événement
             node.status, node.error = TaskStatus.FAILED, str(e)
             await self.emit("task.failed", self._dump(node))
+
+    def _requestable(self) -> list[str]:
+        return sorted(self.pool) + [r for r in ROLES if r not in ("planner", "debugger")]
+
+    async def _handle_messages(self, node: TaskNode, graph: TaskGraph, output: str) -> str:
+        """Journalise les messages de l'agent et réalise les demandes d'intervention (replanification bornée)."""
+        clean, msgs = parse_messages(output, node.agent, node.id)
+        for m in msgs:
+            self.log.add(m)
+            await self.emit("agent.message", m.to_dict())
+            if m.type is MsgType.REQUEST_VALIDATION:
+                await self.emit("agent.validation_requested", {"task": node.id, "agent": node.agent, "reason": m.content})
+            elif m.type is MsgType.ERROR:
+                await self.emit("agent.error_reported", {"task": node.id, "agent": node.agent, "error": m.content})
+            elif m.type in DELEGATING and m.recipient:
+                if self.replans >= self.max_replans:
+                    await self.emit("plan.replan_refused", {"reason": "limite de replanifications atteinte", "agent": m.recipient})
+                elif not _allowed(m.recipient, lambda a: a in self.pool or self._catalog_agent(a) is not None):
+                    await self.emit("plan.replan_refused", {"reason": "agent non autorisé", "agent": m.recipient})
+                else:
+                    self.replans += 1
+                    nid = f"{node.id}_ext{self.replans}"
+                    new = TaskNode(nid, f"{m.recipient} (demandé par {node.agent})", m.recipient, [node.id])
+                    try:
+                        graph.add(new)
+                    except GraphError as e:
+                        await self.emit("plan.replan_refused", {"reason": str(e), "agent": m.recipient}); continue
+                    await self.emit("plan.replanned", {"added": self._dump(new), "requested_by": node.agent, "reason": m.content})
+        return clean
 
     def _is_tester(self, role: str) -> bool:
         d = self._catalog_agent(role)
