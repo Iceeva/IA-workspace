@@ -17,7 +17,7 @@ from app.models.entities import (AiSettings, ApprovalRequest, CustomAgent, FileC
 from app.rag.embedder import HashingEmbedder, OpenAICompatEmbedder
 from app.rag.search import Doc, hybrid_search
 from app.services.runtime_factory import ProviderCfg
-from app.storage.backends import make_storage
+from app.services import blobs
 from app.storage.paths import UnsafePath, safe_path
 from app.tools.registry import Action, ToolBox, ToolDef, ToolError
 from app.workflows.triggers import matches, next_run
@@ -188,7 +188,7 @@ def project_files_tool(maker, org_id: uuid.UUID, user_id: uuid.UUID, project_id:
             f = await _file(s, path)
             if f is None or f.size > 1_000_000:
                 raise ToolError("Fichier introuvable ou trop volumineux")
-            return (await make_storage().get(f.storage_key)).decode("utf-8", "replace")
+            return (await blobs.load(org_id, f.storage_key)).decode("utf-8", "replace")
 
     async def ls(path: str = ".") -> list[str]:
         prefix = "" if path in (".", "") else clean(path).rstrip("/") + "/"

@@ -11,6 +11,7 @@ from app.core.db import get_db
 from app.core.errors import AppError
 from app.models.entities import FileChunk, Role, StoredFile
 from app.services.assembly import fire_event
+from app.services import blobs
 from app.services.audit import audit
 from app.services.codefs import make_diff
 from app.services.projectfiles import write_file
@@ -69,14 +70,14 @@ async def list_files(project_id: uuid.UUID | None = None, limit: int = Query(200
 async def download(file_id: uuid.UUID, c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
     f = await owned(db, StoredFile, file_id, c.org_id, "Fichier")
     name = f.path.rsplit("/", 1)[-1].replace('"', "")
-    return Response(await _storage().get(f.storage_key), media_type="application/octet-stream",
+    return Response(await blobs.load(c.org_id, f.storage_key), media_type="application/octet-stream",
                     headers={"Content-Disposition": f'attachment; filename="{name}"', "X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/files/{file_id}/content")
 async def read_content(file_id: uuid.UUID, c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
     f = await owned(db, StoredFile, file_id, c.org_id, "Fichier")
-    raw = await _storage().get(f.storage_key)
+    raw = await blobs.load(c.org_id, f.storage_key)
     try:
         return ok({"path": f.path, "content": raw.decode("utf-8")})
     except UnicodeDecodeError:
@@ -93,7 +94,7 @@ async def write_content(file_id: uuid.UUID, b: ContentIn, request: Request, c: C
     """Sauvegarde depuis l'éditeur Monaco ; renvoie le diff unifié de la modification."""
     c.require(Role.MEMBER)
     f = await owned(db, StoredFile, file_id, c.org_id, "Fichier")
-    old = (await _storage().get(f.storage_key)).decode("utf-8", "replace")
+    old = (await blobs.load(c.org_id, f.storage_key)).decode("utf-8", "replace")
     try:
         await write_file(db, c.org_id, c.user.id, f.project_id, f.path, b.content.encode())
     except InvalidUpload as e:
@@ -111,4 +112,5 @@ async def delete_file(file_id: uuid.UUID, request: Request, c: Ctx = Depends(ctx
     await db.execute(delete(FileChunk).where(FileChunk.file_id == f.id))
     await audit(db, "file.delete", user_id=c.user.id, org_id=c.org_id, resource="file", resource_id=f.id, request=request)
     await db.commit()
-    await _storage().delete(f.storage_key)
+    await blobs.release(db, c.org_id, f.id, f.storage_key)
+    await db.commit()
