@@ -1,5 +1,7 @@
 """Fournisseur « bridge » : exécute les appels de chat sur les modèles locaux de l'utilisateur via son Local Bridge."""
 from __future__ import annotations
+import time
+
 from app.llm.base import LLMError, LLMProvider, LLMResponse
 from .broker import BridgeTimeout, JobBroker
 
@@ -16,11 +18,12 @@ class BridgeProvider(LLMProvider):
         if await self.broker.status(self.scope) is None:
             raise LLMError("Local Bridge hors ligne : lancez-le sur votre machine (voir docs/PLATFORM.md)")
         jid = await self.broker.submit(self.scope, {
-            "type": "chat", "model": model, "temperature": temperature, "max_tokens": min(max_tokens, MAX_TOKENS_CAP),
+            "type": "chat", "deadline": time.time() + self.timeout_s, "model": model, "temperature": temperature, "max_tokens": min(max_tokens, MAX_TOKENS_CAP),
             "messages": [{"role": m.role, "content": m.content} for m in messages]})
         try:
             res = await self.broker.wait_result(jid, self.timeout_s)
         except BridgeTimeout as e:
+            await self.broker.cancel(jid)   # tâche abandonnée : le bridge ne doit plus l'exécuter
             raise LLMError(str(e)) from e
         if not res.get("ok"):
             raise LLMError(f"Local Bridge : {str(res.get('error', 'erreur inconnue'))[:300]}")

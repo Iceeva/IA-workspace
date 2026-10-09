@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import threading
+import time
 import urllib.request
 from pathlib import Path
 
@@ -58,6 +59,11 @@ def test_pull_rejects_anything_but_bounded_chat_jobs():
             validate_job(bad); assert False, bad
         except PullError:
             pass
+    try:
+        validate_job({**JOB, "deadline": time.time() - 5}); assert False
+    except PullError as e:
+        assert "expirée" in str(e)
+    validate_job({**JOB, "deadline": time.time() + 60})
     net = FakeNet([{**JOB, "type": "http", "url": "http://169.254.169.254"}])
     pc = PullClient(bridge_with(), "https://aiw.example", "KEY", "ORG", http=net)
     pc.run_once()

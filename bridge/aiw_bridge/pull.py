@@ -42,6 +42,8 @@ def validate_job(job: dict) -> dict:
         total += len(m["content"])
     if total > MAX_TOTAL_CHARS:
         raise PullError("Tâche trop volumineuse")
+    if isinstance(job.get("deadline"), (int, float)) and job["deadline"] < time.time():
+        raise PullError("Tâche expirée")
     temp, mt = job.get("temperature", 0.2), job.get("max_tokens", 1024)
     if not isinstance(temp, (int, float)) or not 0 <= temp <= 2 or not isinstance(mt, int) or not 1 <= mt <= MAX_TOKENS:
         raise PullError("Paramètres de génération invalides")

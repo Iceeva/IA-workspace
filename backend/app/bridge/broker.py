@@ -21,6 +21,7 @@ class JobBroker(Protocol):
     async def claim(self, scope: str, wait_s: float) -> dict | None: ...
     async def complete(self, scope: str, job_id: str, result: dict) -> bool: ...
     async def wait_result(self, job_id: str, timeout_s: float) -> dict: ...
+    async def cancel(self, job_id: str) -> None: ...
     async def heartbeat(self, scope: str, info: dict) -> None: ...
     async def status(self, scope: str) -> dict | None: ...
 
@@ -35,6 +36,7 @@ class MemoryBroker:
         self._owner: dict[str, str] = {}
         self._res: dict[str, asyncio.Future] = {}
         self._hb: dict[str, tuple[float, dict]] = {}
+        self._cancelled: set[str] = set()
 
     def _queue(self, scope: str) -> asyncio.Queue:
         return self._q.setdefault(scope, asyncio.Queue())
@@ -47,10 +49,18 @@ class MemoryBroker:
         return jid
 
     async def claim(self, scope: str, wait_s: float) -> dict | None:
-        try:
-            return await asyncio.wait_for(self._queue(scope).get(), wait_s)
-        except asyncio.TimeoutError:
-            return None
+        end = asyncio.get_running_loop().time() + wait_s
+        while True:
+            try:
+                job = await asyncio.wait_for(self._queue(scope).get(), max(0.0, end - asyncio.get_running_loop().time()))
+            except asyncio.TimeoutError:
+                return None
+            if job["id"] not in self._cancelled:   # on ne remet jamais au bridge une tâche abandonnée
+                return job
+
+    async def cancel(self, job_id: str) -> None:
+        self._cancelled.add(job_id)
+        self._res.pop(job_id, None); self._owner.pop(job_id, None)
 
     async def complete(self, scope: str, job_id: str, result: dict) -> bool:
         fut = self._res.get(job_id)
@@ -91,8 +101,17 @@ class RedisBroker:
         return jid
 
     async def claim(self, scope: str, wait_s: float) -> dict | None:
-        item = await self.r.blpop(f"{self.P}jobs:{scope}", timeout=max(1, int(wait_s)))
-        return json.loads(item[1]) if item else None
+        while True:
+            item = await self.r.blpop(f"{self.P}jobs:{scope}", timeout=max(1, int(wait_s)))
+            if not item:
+                return None
+            job = json.loads(item[1])
+            if not await self.r.exists(f"{self.P}cancelled:{job['id']}"):
+                return job
+
+    async def cancel(self, job_id: str) -> None:
+        await self.r.set(f"{self.P}cancelled:{job_id}", "1", ex=900)
+        await self.r.delete(f"{self.P}owner:{job_id}")
 
     async def complete(self, scope: str, job_id: str, result: dict) -> bool:
         if await self.r.get(f"{self.P}owner:{job_id}") != scope:
