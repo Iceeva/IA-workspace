@@ -14,3 +14,7 @@ __pycache__/
 coverage/
 .idea/
 .vscode/
+frontend/src-tauri/target/
+frontend/src-tauri/gen/
+frontend/dist/
+frontend/node_modules/

@@ -12,6 +12,19 @@ jobs:
       - run: cd backend && pytest -q
       - run: PYTHONPATH=backend python bridge/tests/test_bridge.py
       - run: PYTHONPATH=backend:bridge python bridge/tests/test_pull.py
+  portable:   # §42 : le cœur (hors base de données) doit tourner sous Windows et macOS
+    strategy:
+      fail-fast: false
+      matrix: { os: [windows-latest, macos-latest] }
+    runs-on: ${{ matrix.os }}
+    env: { JWT_SECRET: ci-secret-ci-secret-ci-secret-32, JWT_REFRESH_SECRET: ci-refresh-ci-refresh-ci-refresh-32 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r backend/requirements.txt
+      - run: cd backend && pytest -q tests/test_platform_catalog.py tests/test_platform_routing.py tests/test_platform_runtimes.py tests/test_platform_workflows.py tests/test_platform_rag.py tests/test_platform_core.py tests/test_platform_protocol.py tests/test_platform_multimodal.py tests/test_platform_blobs.py tests/test_platform_hardware_reco.py
+      - run: python -c "import sys, runpy; sys.path[:0] = ['backend', 'bridge']; runpy.run_path('bridge/tests/test_bridge.py', run_name='__main__')"
   frontend:
     runs-on: ubuntu-latest
     steps:

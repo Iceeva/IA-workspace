@@ -118,16 +118,42 @@ async def ensure_embeddings(db, org_id: uuid.UUID, embedder, limit: int = 200) -
     return len(chunks)
 
 
+async def _pg_candidates(db, org_id: uuid.UUID, query: str, qvec: list[float], model: str, project_id, limit: int = 200):
+    """Pré-sélection côté PostgreSQL : voisins par similarité cosinus (pgvector) ∪ correspondances plein texte.
+    Retourne des identifiants de segments, ou None si PostgreSQL/pgvector n'est pas disponible (repli Python)."""
+    if db.bind is None or db.bind.dialect.name != "postgresql":
+        return None
+    from sqlalchemy import text
+    try:
+        async with db.begin_nested():   # un échec (extension absente…) n'invalide pas la transaction appelante
+            if not (await db.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'"))).first():
+                return None
+            proj = "AND f.project_id = :proj" if project_id else ""
+            args = {"org": org_id, "m": model, "q": "[" + ",".join(f"{x:.6g}" for x in qvec) + "]", "text": query,
+                    "lim": limit, **({"proj": project_id} if project_id else {})}
+            base = ("FROM file_chunks c JOIN files f ON f.id = c.file_id WHERE c.organization_id = :org "
+                    f"AND f.deleted_at IS NULL {proj} ")
+            vec = (await db.execute(text("SELECT c.id " + base + "AND c.embed_model = :m "
+                   "ORDER BY (c.embedding::text)::vector <=> CAST(:q AS vector) LIMIT :lim"), args)).scalars().all()
+            fts = (await db.execute(text("SELECT c.id " + base + "AND to_tsvector('simple', c.content) @@ plainto_tsquery('simple', :text) "
+                   "ORDER BY ts_rank(to_tsvector('simple', c.content), plainto_tsquery('simple', :text)) DESC LIMIT :lim"), args)).scalars().all()
+        return list(dict.fromkeys([*vec, *fts]))
+    except Exception:  # noqa: BLE001 — dimensions hétérogènes, droits, etc. : on retombe sur le calcul en Python
+        return None
+
+
 async def rag_search(db, org_id: uuid.UUID, query: str, embedder, k: int = 5, project_id: uuid.UUID | None = None) -> list[dict]:
     await ensure_embeddings(db, org_id, embedder)
+    qvec = (await embedder.embed([query]))[0]
     q = select(FileChunk, StoredFile.path).join(StoredFile, FileChunk.file_id == StoredFile.id).where(
         FileChunk.organization_id == org_id, StoredFile.deleted_at.is_(None))
     if project_id:
         q = q.where(StoredFile.project_id == project_id)
-    rows = (await db.execute(q.limit(20000))).all()
+    ids = await _pg_candidates(db, org_id, query, qvec, embedder.name, project_id)
+    q = q.where(FileChunk.id.in_(ids)) if ids else q.limit(20000)
+    rows = (await db.execute(q)).all()
     docs = [Doc(c.id, c.content, c.embedding if c.embed_model == embedder.name else None, {"path": path, "idx": c.idx})
             for c, path in rows]
-    qvec = (await embedder.embed([query]))[0]
     return [{"path": h.doc.meta["path"], "chunk": h.doc.meta["idx"], "score": round(h.score, 4), "text": h.doc.text[:1500]}
             for h in hybrid_search(query, qvec, docs, k)]
 
