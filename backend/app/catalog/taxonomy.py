@@ -164,5 +164,5 @@ def build_default_catalog() -> list[AgentDef]:
                 permission_level=max([p for _, p in tools] or [int(Permission.READ)]),
                 est_tokens=8000 if category == "Research" else 4000, needs_gpu=gpu, min_ram_gb=16.0 if gpu else 0.0,
                 local_ok=True, cloud_ok=True, sensitive=sensitive,
-                system_prompt=f"Tu es {name}. " + guard))
+                system_prompt=f"Tu es {name}. " + guard + (" " + _ROLE_PROMPT["test"] if name == "Testing Engineer" else "")))
     return out

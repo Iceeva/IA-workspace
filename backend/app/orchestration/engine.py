@@ -26,21 +26,28 @@ class ExecutionCancelled(Exception):
     pass
 
 
-def graph_from_workflow(nodes: list[dict]) -> TaskGraph:
+def graph_from_workflow(nodes: list[dict], known: Callable[[str], bool] | None = None) -> TaskGraph:
     """Construit et valide un graphe fourni par l'utilisateur (éditeur de workflows)."""
     if not nodes:
         raise GraphError("Le workflow est vide")
     out = []
     for n in nodes:
         agent = str(n.get("agent", ""))
-        if agent not in ROLES or agent in ("planner", "debugger"):
+        if not _allowed(agent, known):
             raise GraphError(f"Agent non autorisé dans un workflow: {agent}")
         out.append(TaskNode(str(n["id"]), str(n.get("title") or agent.capitalize()), agent,
                             [str(d) for d in n.get("depends_on", [])]))
     return TaskGraph(out)
 
 
-def parse_plan(raw: str) -> TaskGraph:
+def _allowed(agent: str, known: Callable[[str], bool] | None) -> bool:
+    """Rôles standard (hors planner/debugger, internes) ou agent du catalogue accepté par `known`."""
+    if agent in ROLES:
+        return agent not in ("planner", "debugger")
+    return bool(known and known(agent))
+
+
+def parse_plan(raw: str, known: Callable[[str], bool] | None = None) -> TaskGraph:
     """Extrait le JSON du Planner ; valide agents et dépendances."""
     m = re.search(r"\{.*\}", raw, re.S)
     if not m:
@@ -52,7 +59,7 @@ def parse_plan(raw: str) -> TaskGraph:
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         raise GraphError(f"Plan invalide: {e}") from e
     for n in nodes:
-        if n.agent not in ROLES or n.agent in ("planner", "debugger"):
+        if not _allowed(n.agent, known):
             raise GraphError(f"Agent non autorisé dans un plan: {n.agent}")
     if not nodes:
         raise GraphError("Le plan est vide")
@@ -62,25 +69,44 @@ def parse_plan(raw: str) -> TaskGraph:
 class Orchestrator:
     def __init__(self, provider: LLMProvider, model: str, emit: EventSink,
                  is_cancelled: CancelCheck | None = None, max_fix_rounds: int = 2,
-                 agent_overrides: dict[str, dict] | None = None):
+                 agent_overrides: dict[str, dict] | None = None, selector=None, resolve_agent=None,
+                 route_for=None, toolbox_for=None):
+        """selector : AgentSelector (choisit la short-list du catalogue) ; resolve_agent(id) → AgentDef ;
+        route_for(AgentDef) → clé de modèle ; toolbox_for(AgentDef) → ToolBox | None (outils de CET agent)."""
+        self.selector, self.resolve_agent, self.route_for, self.toolbox_for = selector, resolve_agent, route_for, toolbox_for
+        self.pool: dict[str, object] = {}
         self.provider, self.model, self.emit = provider, model, emit
         self.is_cancelled = is_cancelled or (lambda: asyncio.sleep(0, result=False))
         self.max_fix_rounds = max_fix_rounds
         self.overrides = agent_overrides or {}
         self.total_tokens = 0
 
+    def _catalog_agent(self, role: str):
+        return self.resolve_agent(role) if self.resolve_agent and role not in ROLES else None
+
     def _agent(self, role: str) -> BaseAgent:
         o = self.overrides.get(role, {})
+        d = self._catalog_agent(role)
+        if d is not None:
+            model = o.get("model") or (self.route_for(d) if self.route_for else self.model)
+            return BaseAgent(name=d.name, role=d.id, description=d.description, model=model, provider=self.provider,
+                             system_prompt=o.get("system_prompt") or d.system_prompt or f"Tu es {d.name}.",
+                             temperature=o.get("temperature", 0.2), tools=[t for t, _ in d.tools],
+                             toolbox=self.toolbox_for(d) if self.toolbox_for else None)
         return build_agent(role, self.provider, o.get("model", self.model),
                            system_prompt=o.get("system_prompt"), temperature=o.get("temperature"))
 
     async def plan(self, mission: str) -> TaskGraph:
         agent = self._agent("planner")
         await self.emit("plan.started", {"agent": "planner"})
+        note = ""
+        if self.pool:
+            note = ("\n\nAgents spécialisés disponibles (utilisables dans « agent », en plus des rôles standard) :\n" +
+                    "\n".join(f"- {a.id} : {a.description[:140]}" for a in self.pool.values()))
         try:
-            res = await agent.run("Mission à décomposer :", mission)
+            res = await agent.run("Mission à décomposer :" + note, mission)
             self.total_tokens += res.tokens
-            graph = parse_plan(res.output)
+            graph = parse_plan(res.output, lambda a: a in self.pool)
             await self.emit("plan.created", {"source": "planner", "tasks": len(graph.nodes)})
         except GraphError as e:  # repli explicite, journalisé — jamais silencieux
             await self.emit("plan.fallback", {"reason": str(e)})
@@ -88,6 +114,12 @@ class Orchestrator:
         return graph
 
     async def run(self, mission: str, preset: TaskGraph | None = None) -> dict:
+        if self.selector and not preset:
+            sel = self.selector.select(mission)
+            self.pool = {a.id: a for a in sel.agents}
+            await self.emit("agents.selected", {
+                "agents": [{"id": p.agent.id, "name": p.agent.name, "score": p.score, "reason": p.reason}
+                           for p in sel.picks], "considered": sel.considered, "catalog_size": sel.catalog_size})
         graph = preset or await self.plan(mission)
         if preset:
             await self.emit("plan.created", {"source": "workflow", "tasks": len(graph.nodes)})
@@ -116,7 +148,7 @@ class Orchestrator:
             node.output, node.tokens, node.duration_ms = res.output, res.tokens, res.duration_ms
             node.tokens_in, node.tokens_out, node.model = res.tokens_in, res.tokens_out, res.model
             self.total_tokens += res.tokens
-            if node.agent == "tester":
+            if self._is_tester(node.agent):
                 await self._test_fix_loop(node, graph, mission, ctx)
             if node.status is TaskStatus.RUNNING:  # ne pas écraser REVIEW_REQUIRED posé par la boucle test/debug
                 node.status = TaskStatus.COMPLETED
@@ -129,6 +161,10 @@ class Orchestrator:
         except Exception as e:  # noqa: BLE001 — l'erreur est remontée via l'événement
             node.status, node.error = TaskStatus.FAILED, str(e)
             await self.emit("task.failed", self._dump(node))
+
+    def _is_tester(self, role: str) -> bool:
+        d = self._catalog_agent(role)
+        return role == "tester" or (d is not None and (d.role_kind == "test" or d.id == "testing-engineer"))
 
     @staticmethod
     def _add_usage(node: TaskNode, res) -> None:
@@ -145,7 +181,7 @@ class Orchestrator:
             fix = await self._agent("debugger").run("Corrige les erreurs signalées.", f"{ctx}\n\n{node.output}")
             self.total_tokens += fix.tokens
             self._add_usage(node, fix)
-            retest = await self._agent("tester").run(node.title, f"{ctx}\n\nCorrectif:\n{fix.output}")
+            retest = await self._agent(node.agent).run(node.title, f"{ctx}\n\nCorrectif:\n{fix.output}")
             self.total_tokens += retest.tokens
             self._add_usage(node, retest)
             node.output = f"{retest.output}\n\n--- correctif (tour {round_}) ---\n{fix.output}"

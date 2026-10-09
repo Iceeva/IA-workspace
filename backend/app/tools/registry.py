@@ -132,6 +132,24 @@ class ToolBox:
         return sorted(n for n, p in self.grants.items() if p > Permission.NONE and (t := self.registry.get(n))
                       and t.status == "available")
 
+    def visible_actions(self) -> list[tuple[str, str, Action]]:
+        """(outil, action, définition) que l'agent a le droit d'appeler ; les actions au-dessus de son niveau sont invisibles."""
+        out = []
+        for name in self.visible_tools():
+            t = self.registry.get(name)
+            out += [(name, an, a) for an, a in sorted(t.actions.items()) if a.level <= self.grants[name]]
+        return out
+
+    def describe(self) -> str:
+        import inspect
+        lines = []
+        for tool, action, a in self.visible_actions():
+            params = ", ".join(p.name + ("" if p.default is inspect.Parameter.empty else "?")
+                               for p in inspect.signature(a.handler).parameters.values())
+            extra = " [validation humaine requise]" if a.requires_approval else ""
+            lines.append(f"- {tool}.{action}({params}){extra} : {a.description}")
+        return "\n".join(lines)
+
     async def _log(self, kind: str, data: dict) -> None:
         if self.audit:
             await self.audit(kind, {"agent": self.agent, **data})
