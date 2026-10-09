@@ -22,10 +22,29 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from app.runtimes import gguf, hardware
-from app.runtimes.registry import RuntimeRegistry, detect_local
+from app.runtimes.registry import KIND_CAPS, RuntimeInfo, RuntimeRegistry, detect_local
 
 VERSION = "0.1.0"
 MAX_BODY = 5 * 1024 * 1024
+MAX_MEDIA_BODY = 60 * 1024 * 1024     # audio entrant (transcription)
+# route du bridge → (capacité requise, chemin chez le runtime). Le chemin peut être surchargé dans runtimes.json.
+MEDIA_ROUTES = {"/v1/audio/transcriptions": ("speech-to-text", "stt"), "/v1/images/generations": ("text-to-image", "image")}
+
+
+def load_runtimes_file(path: str | Path) -> list[RuntimeInfo]:
+    """Runtimes déclarés (Phonon, Sana, autres) : [{id, kind, name, base_url, capabilities?, paths?:{stt,image}}]."""
+    p = Path(path).expanduser()
+    if not p.is_file():
+        return []
+    out = []
+    for d in json.loads(p.read_text(encoding="utf-8")):
+        url = str(d["base_url"])
+        if not url.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]")):
+            raise ValueError(f"Runtime {d.get('id')}: seules les adresses locales sont autorisées")
+        out.append(RuntimeInfo(id=str(d["id"]), kind=d.get("kind", "custom"), name=d.get("name", d["id"]), base_url=url,
+                               status="connected", capabilities=set(d.get("capabilities") or KIND_CAPS.get(d.get("kind", "custom"), set())),
+                               requirements={"paths": d.get("paths", {})}))
+    return out
 
 
 class Bridge:
@@ -71,6 +90,12 @@ class Bridge:
             if r.status == "connected" and model in r.models:
                 return r, model
         return None, model
+
+    def media_runtime(self, capability: str, wanted: str | None):
+        cands = self.registry.find(capability)
+        if wanted:
+            cands = [r for r in cands if r.id == wanted]
+        return cands[0] if cands else None
 
     def serve(self, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
         srv = ThreadingHTTPServer((host, port), _handler(self))
@@ -171,6 +196,8 @@ def _handler(b: Bridge):
             path = self.path.split("?")[0]
             if not self._guard():
                 return
+            if path in MEDIA_ROUTES:
+                return self._media(path)
             body = self._body()
             if body is None:
                 return
@@ -188,6 +215,33 @@ def _handler(b: Bridge):
             if path == "/v1/chat/completions":
                 return self._proxy(body)
             self._err(404, "NOT_FOUND", "Route inconnue")
+
+        def _media(self, path: str):
+            """Transmet tel quel (multipart ou JSON) vers le runtime local déclaré pour cette capacité."""
+            cap, key = MEDIA_ROUTES[path]
+            n = int(self.headers.get("Content-Length") or 0)
+            if n <= 0 or n > MAX_MEDIA_BODY:
+                return self._err(413, "TOO_LARGE", "Corps absent ou trop volumineux")
+            rt = b.media_runtime(cap, self.headers.get("X-AIW-Runtime"))
+            if rt is None:
+                return self._err(404, "RUNTIME_NOT_FOUND", f"Aucun runtime local déclaré pour « {cap} »")
+            target = rt.base_url.rstrip("/") + (rt.requirements.get("paths", {}).get(key) or path)
+            req = urllib.request.Request(target, self.rfile.read(n), {
+                "Content-Type": self.headers.get("Content-Type", "application/octet-stream")}, method="POST")
+            try:
+                up = urllib.request.urlopen(req, timeout=600)  # noqa: S310 — cible issue du registre local
+            except urllib.error.HTTPError as e:
+                return self._err(502, "UPSTREAM_ERROR", f"Le runtime a répondu HTTP {e.code}")
+            except OSError:
+                return self._err(502, "UPSTREAM_UNREACHABLE", "Runtime injoignable")
+            with up:
+                data = up.read(MAX_MEDIA_BODY)
+            self.send_response(200)
+            self.send_header("Content-Type", up.headers.get("Content-Type", "application/json"))
+            self.send_header("Content-Length", str(len(data)))
+            self._cors()
+            self.end_headers()
+            self.wfile.write(data)
 
         def _proxy(self, body: dict):
             rt, model = b.runtime_for(str(body.get("model", "")))
@@ -237,9 +291,23 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--origin", action="append", default=[], help="origine autorisée (ex. https://ai-workspace.example.com)")
     ap.add_argument("--models-dir", action="append", default=[], help="dossier de modèles GGUF autorisé")
     ap.add_argument("--token-file", default="~/.ai-workspace/bridge-token")
+    ap.add_argument("--runtimes-file", default="~/.ai-workspace/runtimes.json",
+                    help="runtimes locaux déclarés (Phonon, Sana, …)")
+    ap.add_argument("--server", help="mode pull : URL de l'API AI Workspace (https://…)")
+    ap.add_argument("--org", help="mode pull : identifiant d'organisation")
+    ap.add_argument("--api-key", default=os.environ.get("AIW_API_KEY"), help="mode pull : clé API (ou AIW_API_KEY)")
     a = ap.parse_args(argv)
     origins = a.origin or ["http://localhost:4200"]
     bridge = Bridge(load_or_create_token(a.token_file), origins, a.models_dir)
+    for r in load_runtimes_file(a.runtimes_file):
+        bridge.registry.register(r)
+    if a.server:
+        if not (a.org and a.api_key):
+            ap.error("--server exige --org et --api-key (ou AIW_API_KEY)")
+        from .pull import PullClient
+        pc = PullClient(bridge, a.server, a.api_key, a.org)
+        threading.Thread(target=pc.run_forever, args=(threading.Event(),), daemon=True).start()
+        print(f"Mode pull actif vers {a.server} : le serveur peut utiliser vos modèles locaux (chat uniquement).")
     srv = bridge.serve(port=a.port)
     print(f"Local Bridge sur http://127.0.0.1:{bridge.port}\nOrigines autorisées : {', '.join(origins)}\n"
           f"Jeton d'appairage (à coller dans AI Workspace) : {bridge.token}")

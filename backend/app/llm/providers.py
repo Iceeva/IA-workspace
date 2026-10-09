@@ -216,6 +216,7 @@ PRESETS: dict[str, dict] = {
     "localai": {"base_url": "http://localhost:8080/v1", "needs_key": False},
     "vllm": {"base_url": "http://localhost:8000/v1", "needs_key": False},
     "custom": {"base_url": "", "needs_key": False},
+    "bridge": {"base_url": "", "needs_key": False, "options": []},              # modèles locaux via le Local Bridge (pull)
     "azure": {"base_url": "", "needs_key": True, "options": ["api_version"]},   # URL = https://<ressource>.openai.azure.com
     "bedrock": {"base_url": "", "needs_key": False, "options": ["region"]},     # identifiants optionnels (chaîne AWS)
 }
@@ -227,6 +228,12 @@ def build_provider(kind: str, base_url: str | None = None, api_key: str | None =
     options = options or {}
     if kind == "anthropic":
         return AnthropicProvider(api_key)
+    if kind == "bridge":
+        broker, scope = options.get("broker"), options.get("scope")
+        if broker is None or not scope:
+            raise LLMConfigError("Le fournisseur « bridge » exige un courtier et un périmètre utilisateur")
+        from app.bridge.provider import BridgeProvider
+        return BridgeProvider(broker, scope)
     if kind == "azure":
         if not base_url or not api_key:
             raise LLMConfigError("Azure OpenAI exige l'URL de la ressource et une clé API")

@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import admin, ai_platform, auth, chat, files, misc, resources, usage
+from app.api import admin, ai_platform, auth, bridge, chat, files, misc, resources, usage
 from app.core import errors
 from app.core.config import get_settings
 from app.services.redis_utils import rate_limited
@@ -44,5 +44,5 @@ async def health():
     return {"status": "ok"}
 
 
-for r in (auth.router, resources.router, files.router, misc.router, usage.router, chat.router, admin.router, ai_platform.router):
+for r in (auth.router, resources.router, files.router, misc.router, usage.router, chat.router, admin.router, ai_platform.router, bridge.router):
     app.include_router(r)
