@@ -50,5 +50,10 @@ async def run_code(language: str, code: str, timeout_s: int = 10, max_output: in
                                                         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
             await kill.wait()
             out, err, timed_out = b"", b"", True
+    low = err.decode("utf-8", "replace").lower()
+    if not timed_out and proc.returncode != 0 and any(x in low for x in (
+            "cannot connect to the docker daemon", "failed to connect to the docker api", "is the docker daemon running", "error during connect",
+            "unable to find image", "pull access denied", "failed to resolve reference")):
+        raise SandboxUnavailable("Le démon Docker est inaccessible ou l'image d'exécution est introuvable")
     return SandboxResult(proc.returncode if proc.returncode is not None else -1,
                          out.decode("utf-8", "replace")[:max_output], err.decode("utf-8", "replace")[:max_output], timed_out)

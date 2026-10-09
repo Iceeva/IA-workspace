@@ -96,6 +96,10 @@ class Orchestrator:
         return build_agent(role, self.provider, o.get("model", self.model),
                            system_prompt=o.get("system_prompt"), temperature=o.get("temperature"))
 
+    def agent_for(self, role: str) -> BaseAgent:
+        """Fabrique publique : rôle standard ou agent du catalogue, avec modèle routé et outils autorisés."""
+        return self._agent(role)
+
     async def plan(self, mission: str) -> TaskGraph:
         agent = self._agent("planner")
         await self.emit("plan.started", {"agent": "planner"})

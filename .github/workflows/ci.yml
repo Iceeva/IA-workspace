@@ -11,6 +11,7 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - run: cd backend && pytest -q
       - run: PYTHONPATH=backend python bridge/tests/test_bridge.py
+      - run: PYTHONPATH=backend:bridge python bridge/tests/test_pull.py
   frontend:
     runs-on: ubuntu-latest
     steps:

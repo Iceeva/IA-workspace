@@ -22,6 +22,7 @@ test-front:
 
 test-bridge:
 	PYTHONPATH=backend python bridge/tests/test_bridge.py
+	PYTHONPATH=backend:bridge python bridge/tests/test_pull.py
 
 bridge:        ## Local Bridge (modèles locaux pour l'app web) — voir docs/PLATFORM.md
 	PYTHONPATH=backend python -m aiw_bridge --origin http://localhost:4200 --models-dir ~/models

@@ -31,13 +31,14 @@ class Runtime:
     provider: FallbackProvider
     providers: dict
 
-    def route_key(self, role: str, agent_model: str | None = None, sensitive: bool = False) -> str:
+    def route_key(self, role: str, agent_model: str | None = None, sensitive: bool = False,
+                  needs: set[str] | None = None) -> str:
         """Clé de route pour un rôle. Un modèle explicitement choisi pour l'agent est respecté ; sinon la
         préférence de l'organisation s'applique (auto → chaîne classée avec repli ; single/per_agent → modèle fixé).
         Lève NoModelAvailable si la politique ne laisse aucun modèle possible."""
         if agent_model and self.registry.get(agent_model):
             return agent_model
-        needs = ROLE_NEEDS.get(role, {"chat"})
+        needs = set(needs) if needs else ROLE_NEEDS.get(role, {"chat"})
         if self.prefs.mode == "auto":
             self.router.route(needs, self.prefs, agent_id=role, sensitive=sensitive)  # valide la faisabilité
             return "auto:" + ",".join(sorted(needs))

@@ -1,43 +1,49 @@
 # Couverture du cahier des charges (47 sections)
 
-Légende : ✅ fait et testé · 🟡 partiel / non branché · ❌ à faire. « Testé » = tests exécutés ; les tests d'API
-(`backend/tests/test_platform_api.py`) sont écrits mais n'ont pas pu être exécutés là où le code a été produit.
+Légende : ✅ fait et testé · 🟡 partiel / non vérifié de bout en bout · ❌ à faire.
+
+**Ce que « testé » veut dire ici.** Les modules purs (catalogue, routage, runtimes, outils, workflows, RAG, bridge, crypto, CAS)
+sont couverts par ~120 tests qui ont été exécutés. Le code qui dépend de PostgreSQL/SQLAlchemy/Redis — `services/assembly.py`,
+`services/workflow_exec.py`, `worker/main.py`, les routeurs `api/ai_platform.py`, `api/automation.py`, `api/bridge.py`, les
+migrations 0002/0003 — et le **frontend Angular** ont seulement été compilés/analysés statiquement, **jamais lancés** là où ils ont
+été écrits (pas de réseau, pas de base). Les tests `backend/tests/test_platform_api.py` sont écrits mais n'ont pas été exécutés.
+Premier réflexe sur votre machine : `make test` puis `docker compose up`, et corriger ce qui casse.
 
 | § | Sujet | État | Détail |
 |---|---|---|---|
-| 1, 13, 14 | Modes local / cloud (Vercel) | 🟡 | Docker Compose et `api/index.py` existaient déjà ; pas de paquet desktop |
-| 15 | Mode hybride | 🟡 | Bridge ✅ (navigateur → modèles locaux). ❌ mode « pull » pour que le worker serveur utilise vos modèles ; ❌ écran d'appairage dans l'UI |
-| 2, 45 | Séparation agents / modèles / fournisseurs / runtimes / outils | ✅ | Les agents déclarent des capacités (`needs`), jamais un fournisseur |
-| 3, 4 | Intention, sélection d'agents pertinents | 🟡 | ✅ analyseur + sélecteur (heuristique FR/EN, raffinement LLM optionnel). ❌ l'orchestrateur planifie encore avec ses 7 rôles fixes : le sélecteur n'est exposé qu'en aperçu (`POST /catalog/select`). ❌ replanification en cours d'exécution |
-| 5, 6 | Catalogue > 1 000 agents | ✅ | 1 096 définitions générées depuis une taxonomie. **Leurs prompts sont génériques** : à affiner agent par agent |
-| 7, 8 | Fournisseurs, clés chiffrées | 🟡 | ✅ 15 types compatibles OpenAI + Anthropic, AES-256-GCM, clés masquées. ❌ Azure OpenAI, AWS Bedrock (protocoles différents). ❌ écrans de gestion (API seulement) |
-| 9 | 3 stratégies de modèles | ✅ | Routeur + préférences par organisation, branché dans le worker |
-| 10, 11 | Modèles locaux, GGUF | ✅ | Détection Ollama / LM Studio / llama.cpp / vLLM ; lecture d'en-tête GGUF. ❌ écrans |
+| 1, 13, 14 | Modes local / cloud (Vercel) | 🟡 | Docker Compose et `api/index.py` existaient ; Control/Execution Plane décrit dans PLATFORM.md ; pas de paquet desktop |
+| 15 | Mode hybride | 🟡 | ✅ Bridge navigateur→local et **mode pull** (le bridge appelle le serveur, courtier mémoire/Redis, annulation, délai). 🟡 page « Runtimes » = état + instructions (pas d'appairage en un clic) |
+| 2, 45 | Séparation agents / modèles / fournisseurs / runtimes / outils | ✅ | Les agents déclarent des capacités (`needs`) |
+| 3, 4 | Intention, sélection d'agents pertinents | 🟡 | ✅ analyseur + sélecteur, **branchés dans l'orchestrateur** (le planificateur reçoit la short-list ; agents du catalogue exécutables ; testeurs → boucle de correction). ❌ replanification en cours d'exécution |
+| 5, 6 | Catalogue > 1 000 agents | ✅ | 1 096 définitions. **Prompts génériques** : à affiner |
+| 7, 8 | Fournisseurs, clés chiffrées | ✅ | 15+ types compatibles OpenAI, Anthropic, **Azure OpenAI, AWS Bedrock** ; AES-256-GCM avec rotation ; clés masquées ; page « Fournisseurs » (non lancée) |
+| 9 | 3 stratégies de modèles | ✅ | Routeur + préférences par organisation + simulation de routage |
+| 10, 11 | Modèles locaux, GGUF | 🟡 | Détection runtimes, lecture GGUF via le bridge. ❌ écran de sélection d'un fichier GGUF |
 | 12, 32, 42 | Local Runtime, profil matériel, multiplateforme | 🟡 | ✅ Bridge + profil (NVIDIA, Apple Silicon). ❌ GPU AMD/Intel ; ❌ installeur ; CI Linux seulement |
-| 16 | Multimodalité | 🟡 | Modalités et capacités déclarées et routables. ❌ aucun pipeline d'exécution image/audio/vidéo |
-| 17, 18 | Phonon, Sana | 🟡 | Enregistrables comme runtimes déclarés (`speech-to-text`, `text-to-image`). ❌ adaptateurs d'appel : leur protocole n'est pas connu du projet |
-| 19 | Runtime Registry | 🟡 | ✅ en mémoire (bridge). ❌ persistance et API côté cloud |
-| 20, 21 | Outils et permissions | 🟡 | ✅ registre, niveaux, audit ; filesystem, calculatrice, git (lecture), python (sandbox Docker). ❌ terminal, navigateur, recherche web, GitHub, base de données, HTTP, e-mail… (déclarés `planned`). ❌ boucle d'appel d'outils par les agents |
-| 22 | Validation humaine | 🟡 | ✅ mécanisme (refus par défaut, délai = refus). ❌ stockage en base et écran d'approbation |
-| 23 | Mémoire multi-niveaux | 🟡 | Mémoire projet existante ; niveaux utilisateur/agent/organisation non ajoutés |
-| 24 | RAG | ❌ | pgvector, découpage, embeddings : non commencé |
-| 25, 26 | Éditeur de workflows, automatisations | ❌ | Seuls les workflows préréglés existaient ; pas d'éditeur ni de déclencheurs |
-| 27 | Sandbox | ✅ | Existante (Docker, sans réseau, CPU/RAM/PIDs bornés) |
-| 28, 29 | Stockage dédupliqué, compressé, chiffré | 🟡 | ✅ module CAS testé (hash par organisation, zstd/zlib, AES-GCM, intégrité). ❌ pas branché sur l'upload ; ❌ pas de comptage de références ni de ramasse-miettes |
-| 30 | Quantization Studio | 🟡 | ✅ calculs + API (valeurs indicatives, étiquetées « avec perte »). ❌ écran ; ❌ quantification réelle de modèles |
-| 31 | Benchmarks | 🟡 | ✅ module (TTFT, tokens/s, démarrage à froid, stabilité, ressources, qualité rapide). ❌ endpoint/écran |
-| 33–35 | Interface, tableau de bord temps réel, Marketplace | ❌ | Frontend Angular non modifié. L'API de recherche du Marketplace existe |
-| 36, 37 | Création d'agents, équipes | ❌ | Agents personnalisables via JSON (`Catalog.load_json`) ; pas d'éditeur ni d'équipes |
-| 38 | Communication entre agents | 🟡 | Messages enregistrés (existant) ; protocole étendu non ajouté |
-| 39 | Coûts et budgets | ✅ | Tokens entrée/sortie, modèle réel, coût par tâche ; plafond mensuel (bloquer / confirmer) |
+| 16 | Multimodalité | 🟡 | Modalités déclarées et routables ; passthrough voix/image du bridge. ❌ pipelines complets (image→vision→agent, micro→STT→orchestrateur) |
+| 17, 18 | Phonon, Sana | 🟡 | Adaptateurs HTTP configurables (convention OpenAI par défaut). **Non vérifiés contre les vrais Phonon/Sana** |
+| 19 | Runtime Registry | 🟡 | En mémoire (bridge). ❌ persistance côté cloud |
+| 20, 21 | Outils et permissions | ✅ | 17 outils, niveaux NONE→ADMIN (agents plafonnés à EXECUTE), audit, boucle d'appel d'outils. Terminal = conteneur Docker isolé (jamais l'hôte). Nécessite un démon Docker |
+| 22 | Validation humaine | 🟡 | ✅ mécanisme + stockage + API + panneau « validation requise ». Non lancé |
+| 23 | Mémoire multi-niveaux | 🟡 | 6 portées + rappel sémantique. Non lancé sur PostgreSQL |
+| 24 | RAG | 🟡 | Découpage, embeddings (lexical hors-ligne ou API compatible), recherche hybride RRF **en Python**. ❌ pgvector |
+| 25, 26 | Workflows, automatisations | 🟡 | ✅ moteur (parallélisme, conditions, boucles, fusion, retries, timeouts, validation humaine, HTTP, code), déclencheurs (cron, webhook HMAC, GitHub, événements), API. 🟡 page Automatisations = édition JSON. ❌ éditeur graphique de nœuds |
+| 27 | Sandbox | ✅ | Docker, sans réseau, CPU/RAM/PIDs bornés ; erreur explicite si le démon est absent |
+| 28, 29 | Stockage dédupliqué, compressé, chiffré | 🟡 | ✅ module CAS testé. ❌ pas branché sur l'upload ; ❌ pas de ramasse-miettes |
+| 30 | Quantization Studio | 🟡 | ✅ calculs + API + page (valeurs indicatives, « avec perte »). ❌ quantification réelle |
+| 31 | Benchmarks | 🟡 | ✅ module. ❌ endpoint/écran |
+| 33–35 | Interface, dashboard, Marketplace | 🟡 | ✅ pages : Marketplace, Fournisseurs/stratégie, Équipes + Agent Builder, Automatisations, Quantification, Runtimes. Endpoint `/api/dashboard/overview` (coûts, fournisseurs, bridge, approbations). ❌ pages Benchmarks, Monitoring, Sécurité dédiées ; le tableau de bord Angular n'affiche pas encore ces nouvelles données |
+| 36, 37 | Création d'agents, équipes | 🟡 | ✅ API + page. Les équipes restreignent le pool de sélection |
+| 38 | Communication entre agents | 🟡 | Messages enregistrés ; protocole étendu non ajouté |
+| 39 | Coûts et budgets | ✅ | Tokens entrée/sortie, modèle réel, coût ; plafond mensuel (bloquer / confirmer) |
 | 40 | Fallback automatique | ✅ | Chaîne configurable + disjoncteur |
-| 41 | Observabilité | 🟡 | Événements `model.routing`, `model.failed`, `model.fallback` ; modèle et tokens par tâche. ❌ écran de trace |
-| 43, 44 | Architecture technique, Control/Execution Plane | 🟡 | FastAPI, Python, Postgres, Redis ✅. ❌ Tauri ; ❌ pgvector |
-| 46, 47 | Objectif final | 🟡 | Les briques sont là ; l'intégration complète (sélecteur → orchestrateur → outils) reste à faire |
+| 41 | Observabilité | 🟡 | Événements de routage et d'agents sélectionnés ; ❌ écran de trace dédié |
+| 43, 44 | Architecture technique | 🟡 | FastAPI, Python, Postgres, Redis ✅. ❌ Tauri ; ❌ pgvector |
+| 46, 47 | Objectif final | 🟡 | Chaîne complète câblée dans le code (sélecteur → routeur → outils → mémoire/RAG → validation) mais **jamais exécutée de bout en bout** |
 
 ## Ordre conseillé pour la suite
-1. Brancher le sélecteur dans l'orchestrateur (le Planner reçoit la short-list d'agents ; l'engine exécute des agents du catalogue).
-2. Boucle d'appel d'outils (function calling) avec `ToolBox` et approbations en base.
-3. Mode « pull » du Local Bridge (files Redis par utilisateur) + écran d'appairage.
-4. Écrans Angular : fournisseurs, modèles/routage, Marketplace, tableau de bord.
-5. RAG (pgvector), puis éditeur de workflows et déclencheurs.
+1. Lancer `make test` et `docker compose up`, corriger les écarts d'intégration (base, migrations, worker).
+2. Exécuter les tests d'API et compiler le frontend (`npm ci && ng build`).
+3. pgvector pour le RAG ; brancher le CAS sur l'upload.
+4. Éditeur graphique de workflows, écrans Benchmarks/Monitoring/Sécurité, appairage du bridge.
+5. Tauri, GPU AMD/Intel, CI Windows/macOS.

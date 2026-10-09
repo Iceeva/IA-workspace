@@ -84,6 +84,7 @@ class Execution(Mixin, Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     tokens: Mapped[int] = mapped_column(Integer, default=0)
     workflow: Mapped[list | None] = mapped_column(JSON, nullable=True)  # graphe personnalisé (sinon: Planner)
+    team_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)  # équipe : restreint le pool d'agents
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     events: Mapped[list["ExecutionEvent"]] = relationship(back_populates="execution", order_by="ExecutionEvent.seq")
@@ -167,6 +168,8 @@ class FileChunk(Base):
     file_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("files.id"), index=True)
     idx: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    embed_model: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
 
 # ---------------------------------------------------------------- plateforme
@@ -215,6 +218,7 @@ class ProviderConfig(Mixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     priority: Mapped[int] = mapped_column(Integer, default=100)
     local: Mapped[bool] = mapped_column(Boolean, default=False)
+    options: Mapped[dict] = mapped_column(JSON, default=dict)   # api_version (Azure), region (Bedrock), …
 
 
 class AiSettings(Mixin, Base):
@@ -232,6 +236,8 @@ class AiSettings(Mixin, Base):
     fallback: Mapped[list] = mapped_column(JSON, default=list)
     monthly_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     on_limit: Mapped[str] = mapped_column(String(10), default="block")    # block | confirm
+    embedding_provider: Mapped[str | None] = mapped_column(String(60), nullable=True)  # nom d'un ProviderConfig
+    embedding_model: Mapped[str | None] = mapped_column(String(160), nullable=True)   # vide = embeddings lexicaux locaux
 
 
 class Subscription(Mixin, Base):
@@ -273,3 +279,79 @@ class AuditLog(Base):
     ip: Mapped[str] = mapped_column(String(64), default="")
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------------------------------------------------------------- équipes, agents personnalisés, automatisation
+class Team(Mixin, Base):
+    """Équipe d'agents (§37) : un sous-ensemble du catalogue que l'orchestrateur dirige pour une mission."""
+    __tablename__ = "teams"
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="uq_team_org_name"),)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    description: Mapped[str] = mapped_column(Text, default="")
+    agent_ids: Mapped[list] = mapped_column(JSON, default=list)   # identifiants du catalogue ou d'agents personnalisés
+
+
+class CustomAgent(Mixin, Base):
+    """Agent créé par l'utilisateur (§36). Fusionné au catalogue de son organisation uniquement."""
+    __tablename__ = "custom_agents"
+    __table_args__ = (UniqueConstraint("organization_id", "agent_id", name="uq_custom_agent"),)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    agent_id: Mapped[str] = mapped_column(String(40))
+    definition: Mapped[dict] = mapped_column(JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class Workflow(Mixin, Base):
+    __tablename__ = "workflows"
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="uq_workflow_org_name"),)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    description: Mapped[str] = mapped_column(Text, default="")
+    definition: Mapped[dict] = mapped_column(JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)  # projet dont les fichiers sont accessibles
+
+
+class WorkflowTrigger(Mixin, Base):
+    __tablename__ = "workflow_triggers"
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    workflow_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workflows.id"), index=True)
+    type: Mapped[str] = mapped_column(String(20))      # schedule | webhook | github | file_added | api_event | agent_event | db_event
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+    secret_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkflowRun(Mixin, Base):
+    __tablename__ = "workflow_runs"
+    __table_args__ = (Index("ix_wfrun_status", "status", "created_at"),)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    workflow_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workflows.id"), index=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    trigger_type: Mapped[str] = mapped_column(String(20), default="manual")
+    status: Mapped[str] = mapped_column(String(20), default="PENDING")   # PENDING RUNNING COMPLETED FAILED CANCELLED
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    node_states: Mapped[dict] = mapped_column(JSON, default=dict)
+    output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ApprovalRequest(Mixin, Base):
+    """Validation humaine (§22) : une action sensible attend la décision d'un membre de l'organisation."""
+    __tablename__ = "approval_requests"
+    __table_args__ = (Index("ix_approval_status", "organization_id", "status"),)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    execution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    agent: Mapped[str] = mapped_column(String(60), default="")
+    tool: Mapped[str] = mapped_column(String(40))
+    action: Mapped[str] = mapped_column(String(40))
+    summary: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(12), default="PENDING")   # PENDING APPROVED DENIED EXPIRED
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

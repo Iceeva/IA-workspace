@@ -16,6 +16,7 @@ export class ApiService {
     return this.http.get<R<T>>(`${API}${path}`, { params: clean });
   }
   post<T>(path: string, body: unknown) { return this.http.post<R<T>>(`${API}${path}`, body); }
+  patch<T>(path: string, body: unknown) { return this.http.patch<R<T>>(`${API}${path}`, body); }
   put<T>(path: string, body: unknown) { return this.http.put<R<T>>(`${API}${path}`, body); }
   delete(path: string) { return this.http.delete<void>(`${API}${path}`); }
   upload<T>(path: string, form: FormData) { return this.http.post<R<T>>(`${API}${path}`, form); }

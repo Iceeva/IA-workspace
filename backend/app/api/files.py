@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.errors import AppError
 from app.models.entities import FileChunk, Role, StoredFile
+from app.services.assembly import fire_event
 from app.services.audit import audit
 from app.services.codefs import make_diff
 from app.services.projectfiles import write_file
@@ -48,6 +49,8 @@ async def upload(request: Request, file: UploadFile = File(...), project_id: uui
     except InvalidUpload as e:
         raise AppError(422, e.code, e.message)
     await audit(db, "file.upload", user_id=c.user.id, org_id=c.org_id, resource="file", resource_id=f.id, request=request)
+    await fire_event(db, c.org_id, {"type": "file_added", "path": f.path, "project_id": str(project_id or ""),
+                                    "content_type": f.content_type, "size": f.size})   # déclencheurs « fichier ajouté »
     await db.commit()
     return ok(_dto(f))
 

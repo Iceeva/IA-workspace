@@ -68,9 +68,9 @@ def test_agent_uses_granted_tool_then_answers_and_accounts_all_calls():
 
 def test_tool_prompt_lists_only_permitted_actions():
     with tempfile.TemporaryDirectory() as d:
-        box = ToolBox(default_registry(d), {"filesystem": Permission.READ, "terminal": Permission.EXECUTE})
+        box = ToolBox(default_registry(d), {"filesystem": Permission.READ, "git": Permission.NONE})
         desc = box.describe()
-        assert "filesystem.read(path)" in desc and "filesystem.write" not in desc and "terminal" not in desc
+        assert "filesystem.read(path)" in desc and "filesystem.write" not in desc and "git" not in desc
 
 
 def test_denied_and_unapproved_calls_are_reported_to_the_agent_not_executed():
@@ -188,4 +188,5 @@ def test_catalog_agent_gets_only_its_own_toolbox():
         o, _ = orch(p, toolbox_for=toolbox_for)
         run(o.run("Créer une application React"))
         assert [i for i, _ in boxes] == ["react-developer"]
-        assert "terminal" not in boxes[0][1].visible_tools()    # « terminal » prévu mais non implémenté : jamais présenté
+        assert boxes[0][1].visible_tools() == ["filesystem", "git", "terminal"]   # ses outils déclarés, rien d'autre
+        assert "python" not in boxes[0][1].visible_tools() and "email" not in boxes[0][1].visible_tools()

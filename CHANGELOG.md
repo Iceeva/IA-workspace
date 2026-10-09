@@ -1,5 +1,15 @@
 # Journal des changements
 
+## [Non publié] — plateforme multi-agents
+- Catalogue de 1 096 agents, sélection d'agents pertinents branchée dans l'orchestrateur, équipes et agents personnalisés.
+- Routage de modèles (3 modes), fallback avec disjoncteur, budgets ; fournisseurs OpenAI-compatibles, Anthropic, Azure OpenAI, Bedrock.
+- Local Bridge (CORS/PNA, appairage, GGUF, runtimes, voix/image) et mode pull pour les workers serveur.
+- 17 outils avec permissions NONE→ADMIN, validation humaine stockée, boucle d'appel d'outils, terminal Docker isolé.
+- Workflows (parallélisme, conditions, boucles, validation humaine, HTTP, code), déclencheurs cron/webhook/GitHub/événements.
+- RAG (découpage, embeddings, recherche hybride), mémoire à 6 portées, stockage CAS (dédup + zstd + AES-GCM).
+- Pages Angular : Marketplace, Fournisseurs, Équipes/Agent Builder, Automatisations, Quantification, Runtimes.
+- Voir docs/ROADMAP.md pour ce qui est vérifié, non lancé ou non fait.
+
 ## Non publié
 ### Corrigé
 - Orchestrateur : une tâche de test toujours en échec après les tours de correction reste `REVIEW_REQUIRED`

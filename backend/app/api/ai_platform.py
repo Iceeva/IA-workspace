@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.catalog.catalog import Catalog
 from app.core.config import get_settings
 from app.core.crypto import CryptoError, get_secretbox, mask
 from app.core.db import get_db
@@ -15,6 +14,7 @@ from app.llm.providers import PRESETS
 from app.models.entities import AiSettings, ProviderConfig, Role
 from app.routing.models import NoModelAvailable
 from app.routing.selector import AgentSelector
+from app.services.assembly import get_org_catalog
 from app.runtimes import quantization
 from app.services.audit import audit
 from app.services.runtime_factory import ProviderCfg, prefs_from_settings, registry_from_configs
@@ -24,16 +24,14 @@ from .common import ok
 from .deps import Ctx, ctx
 
 router = APIRouter(prefix="/api", tags=["platform"])
-CATALOG = Catalog.default()
-SELECTOR = AgentSelector(CATALOG)
 KINDS = set(PRESETS) | {"anthropic"}
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,59}$")  # sert de préfixe de clé de modèle : pas de « : »
 
 
 # ---- catalogue --------------------------------------------------------------------------------------------------
 @router.get("/catalog/categories")
-async def categories(c: Ctx = Depends(ctx)):
-    return ok([{"name": n, "count": k} for n, k in CATALOG.categories().items()])
+async def categories(c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
+    return ok([{"name": n, "count": k} for n, k in (await get_org_catalog(db, c.org_id)).categories().items()])
 
 
 @router.get("/catalog/agents")
@@ -41,16 +39,16 @@ async def search_agents(q: str = Query("", max_length=200), category: str | None
                         need: str | None = None, modality: str | None = None, role_kind: str | None = None,
                         local_only: bool = False, cloud_only: bool = False, sensitive: bool | None = None,
                         max_tokens: int | None = Query(None, ge=1), limit: int = Query(30, ge=1, le=100),
-                        offset: int = Query(0, ge=0), c: Ctx = Depends(ctx)):
-    items, total = CATALOG.search(q, category=category, skill=skill, need=need, modality=modality,
+                        offset: int = Query(0, ge=0), c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
+    items, total = (await get_org_catalog(db, c.org_id)).search(q, category=category, skill=skill, need=need, modality=modality,
                                   role_kind=role_kind, local_only=local_only, cloud_only=cloud_only,
                                   sensitive=sensitive, max_tokens=max_tokens, limit=limit, offset=offset)
     return ok([a.to_dict() for a in items], total=total, limit=limit, offset=offset)
 
 
 @router.get("/catalog/agents/{agent_id}")
-async def get_agent(agent_id: str, c: Ctx = Depends(ctx)):
-    a = CATALOG.get(agent_id)
+async def get_agent(agent_id: str, c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
+    a = (await get_org_catalog(db, c.org_id)).get(agent_id)
     if not a:
         raise AppError(404, "RESOURCE_NOT_FOUND", "Agent introuvable")
     return ok(a.to_dict())
@@ -62,9 +60,9 @@ class SelectIn(BaseModel):
 
 
 @router.post("/catalog/select")
-async def select_agents(b: SelectIn, c: Ctx = Depends(ctx)):
+async def select_agents(b: SelectIn, c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
     """Aperçu de la sélection d'agents pour une mission (heuristique locale, aucun appel de modèle)."""
-    s = SELECTOR.select(b.mission, max_agents=b.max_agents)
+    s = AgentSelector(await get_org_catalog(db, c.org_id)).select(b.mission, max_agents=b.max_agents)
     return ok({"agents": [{"id": p.agent.id, "name": p.agent.name, "score": p.score, "reason": p.reason,
                            "needs": list(p.agent.needs), "sensitive": p.agent.sensitive} for p in s.picks],
                "considered": s.considered, "catalog_size": s.catalog_size, "needs": sorted(s.needs),
@@ -108,6 +106,14 @@ class ProviderIn(BaseModel):
     enabled: bool = True
     priority: int = Field(100, ge=0, le=10000)
     local: bool = False
+    options: dict[str, str] = Field(default_factory=dict, max_length=5)   # api_version (Azure), region (Bedrock)
+
+    @field_validator("options")
+    @classmethod
+    def _opts(cls, v):
+        if set(v) - {"api_version", "region"} or any(len(x) > 60 for x in v.values()):
+            raise ValueError("options autorisées : api_version, region (60 caractères max)")
+        return v
 
     @field_validator("kind")
     @classmethod
@@ -131,6 +137,7 @@ class ProviderPatch(BaseModel):
     enabled: bool | None = None
     priority: int | None = Field(None, ge=0, le=10000)
     local: bool | None = None
+    options: dict[str, str] | None = None
 
 
 def _check_url(kind: str, url: str | None) -> str | None:
@@ -150,7 +157,8 @@ def _view(p: ProviderConfig) -> dict:
         except CryptoError:
             hint = "illisible"  # clé de chiffrement changée : l'utilisateur doit ressaisir la clé API
     return {"id": str(p.id), "kind": p.kind, "name": p.name, "base_url": p.base_url, "has_key": bool(p.api_key_enc),
-            "key_hint": hint, "models": p.models, "enabled": p.enabled, "priority": p.priority, "local": p.local}
+            "key_hint": hint, "models": p.models, "enabled": p.enabled, "priority": p.priority, "local": p.local,
+            "options": p.options or {}}
 
 
 def _need_key(kind: str, key: str | None, enc: str | None) -> None:
@@ -189,7 +197,7 @@ async def create_provider(b: ProviderIn, request: Request, c: Ctx = Depends(ctx)
         raise AppError(409, "PROVIDER_EXISTS", "Un fournisseur porte déjà ce nom")
     p = ProviderConfig(organization_id=c.org_id, kind=b.kind, name=b.name, base_url=_check_url(b.kind, b.base_url),
                        models=[m.model_dump() for m in b.models], enabled=b.enabled, priority=b.priority,
-                       local=b.local)
+                       local=b.local, options=b.options)
     if b.api_key:
         p.api_key_enc = get_secretbox().encrypt(b.api_key, aad=str(c.org_id))
     db.add(p); await db.flush()
@@ -214,6 +222,8 @@ async def update_provider(pid: uuid.UUID, b: ProviderPatch, request: Request, c:
             setattr(p, k, data[k])
     if b.models is not None:
         p.models = [m.model_dump() for m in b.models]
+    if b.options is not None:
+        p.options = b.options
     _need_key(p.kind, None, p.api_key_enc)
     await audit(db, "provider.update", user_id=c.user.id, org_id=c.org_id, resource="provider", resource_id=p.id,
                 request=request, meta={"fields": sorted(data)})
@@ -244,6 +254,8 @@ class AiSettingsIn(BaseModel):
     fallback: list[str] = Field(default_factory=list, max_length=10)
     monthly_budget_usd: float | None = Field(None, ge=0)
     on_limit: str = Field("block", pattern="^(block|confirm)$")
+    embedding_provider: str | None = Field(None, max_length=60)   # nom d'un fournisseur ; vide = embeddings lexicaux locaux
+    embedding_model: str | None = Field(None, max_length=160)
 
     @field_validator("weights")
     @classmethod
@@ -296,7 +308,7 @@ async def route_preview(b: RouteIn, c: Ctx = Depends(ctx), db: AsyncSession = De
     from app.routing.models import ModelRouter
     rows = (await db.execute(select(ProviderConfig).where(ProviderConfig.organization_id == c.org_id,
                                                           ProviderConfig.enabled.is_(True)))).scalars().all()
-    cfgs = [ProviderCfg(p.kind, p.name, models=p.models, local=p.local) for p in rows]
+    cfgs = [ProviderCfg(p.kind, p.name, models=p.models, local=p.local or p.kind == "bridge") for p in rows]
     s = (await db.execute(select(AiSettings).where(AiSettings.organization_id == c.org_id))).scalar_one_or_none()
     try:
         d = ModelRouter(registry_from_configs(cfgs)).route(set(b.needs), prefs_from_settings(s), agent_id=b.agent_id,

@@ -1,7 +1,7 @@
 import { Component, computed, inject, OnInit } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { LucideAngularModule, LayoutDashboard, Boxes, FolderGit2, Bot, ListChecks, Activity, MessageSquare, Files,
-  Code2, Brain, Workflow, Gauge, Settings, ShieldCheck, Sun, Moon, Monitor, LogOut } from 'lucide-angular';
+  Code2, Brain, Workflow, Gauge, Settings, ShieldCheck, Sun, Moon, Monitor, LogOut, Zap, Store, Users, Plug, Cpu, Scale } from 'lucide-angular';
 import { AuthService } from '../../core/auth.service';
 import { ThemeService } from '../../core/theme.service';
 
@@ -61,7 +61,10 @@ export class Shell implements OnInit {
     { path: '/tasks', label: 'Tâches', icon: ListChecks }, { path: '/executions', label: 'Exécutions', icon: Activity },
     { path: '/chat', label: 'Chat', icon: MessageSquare }, { path: '/files', label: 'Fichiers', icon: Files },
     { path: '/code', label: 'Code', icon: Code2 }, { path: '/memory', label: 'Mémoire', icon: Brain },
-    { path: '/workflows', label: 'Workflows', icon: Workflow }, { path: '/usage', label: 'Usage', icon: Gauge },
+    { path: '/workflows', label: 'Workflows', icon: Workflow },
+    { path: '/automations', label: 'Automatisations', icon: Zap }, { path: '/marketplace', label: 'Marketplace', icon: Store },
+    { path: '/teams', label: 'Équipes', icon: Users }, { path: '/providers', label: 'Fournisseurs', icon: Plug },
+    { path: '/runtimes', label: 'Runtimes locaux', icon: Cpu }, { path: '/quantization', label: 'Quantification', icon: Scale }, { path: '/usage', label: 'Usage', icon: Gauge },
     { path: '/settings', label: 'Paramètres', icon: Settings },
   ];
   links = computed(() => this.auth.me()?.is_platform_admin ? [...this.all, { path: '/admin', label: 'Administration', icon: ShieldCheck }] : this.all);

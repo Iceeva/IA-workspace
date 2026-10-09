@@ -55,6 +55,7 @@ class ExecutionIn(BaseModel):
     project_id: uuid.UUID
     mission: str = Field(min_length=5, max_length=8000)
     workflow: list[dict] | None = Field(default=None, max_length=30)
+    team_id: uuid.UUID | None = None   # restreint le pool d'agents du catalogue
 
 
 @router.get("/workspaces")
@@ -138,12 +139,17 @@ async def create_execution(b: ExecutionIn, request: Request, c: Ctx = Depends(ct
     await ensure_provider_enabled(db)
     if b.workflow:
         from app.orchestration.engine import GraphError, graph_from_workflow
+        from app.services.assembly import get_org_catalog
+        catalog = await get_org_catalog(db, c.org_id)
         try:
-            graph_from_workflow(b.workflow)
+            graph_from_workflow(b.workflow, lambda a: catalog.get(a) is not None)
         except (GraphError, KeyError) as ex:
             raise AppError(422, "INVALID_WORKFLOW", str(ex))
+    if b.team_id:
+        from app.models.entities import Team
+        await _owned(db, Team, b.team_id, c.org_id, "Équipe")
     e = Execution(organization_id=c.org_id, project_id=b.project_id, created_by=c.user.id, mission=b.mission,
-                  workflow=b.workflow)
+                  workflow=b.workflow, team_id=b.team_id)
     db.add(e); await db.flush()
     await audit(db, "execution.create", user_id=c.user.id, org_id=c.org_id, resource="execution", resource_id=e.id, request=request)
     await db.commit()
