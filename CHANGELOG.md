@@ -9,6 +9,7 @@
 - RAG (découpage, embeddings, recherche hybride), mémoire à 6 portées, stockage CAS (dédup + zstd + AES-GCM).
 - Pages Angular : Marketplace, Fournisseurs, Équipes/Agent Builder, Automatisations, Quantification, Runtimes.
 - Protocole inter-agents + replanification ; benchmarks et recommandation matériel ; pipelines voix/image ; CAS branché sur les fichiers ; pgvector (migration 0004) ; éditeur visuel de workflows ; pages Modèles locaux, Benchmarks, Monitoring, Sécurité ; coque Tauri ; CI Windows/macOS.
+- Vidéo (analyse et génération), éditeur de workflows glisser-déposer, prompts détaillés pour les 1 096 agents, icônes Tauri.
 - Correctif : `S3Storage.exists` était mal indenté (S3 inutilisable).
 - Voir docs/ROADMAP.md pour ce qui est vérifié, non lancé ou non fait.
 

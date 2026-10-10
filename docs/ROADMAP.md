@@ -15,19 +15,19 @@ Premier réflexe sur votre machine : `make test` puis `docker compose up`, et co
 | 15 | Mode hybride | 🟡 | ✅ Bridge navigateur→local et **mode pull** (le bridge appelle le serveur, courtier mémoire/Redis, annulation, délai). 🟡 page « Runtimes » = état + instructions (pas d'appairage en un clic) |
 | 2, 45 | Séparation agents / modèles / fournisseurs / runtimes / outils | ✅ | Les agents déclarent des capacités (`needs`) |
 | 3, 4 | Intention, sélection d'agents pertinents | ✅ | Analyseur + sélecteur branchés dans l'orchestrateur ; **replanification en cours d'exécution** (un agent peut demander un autre agent, borné à 3) ; testeurs → boucle de correction |
-| 5, 6 | Catalogue > 1 000 agents | ✅ | 1 096 définitions. **Prompts génériques** : à affiner |
+| 5, 6 | Catalogue > 1 000 agents | ✅ | 1 096 définitions. ✅ prompts spécialisés par agent (mission, pratiques, livrable, garde-fous, outils selon permission), tous distincts, testés |
 | 7, 8 | Fournisseurs, clés chiffrées | ✅ | 15+ types compatibles OpenAI, Anthropic, **Azure OpenAI, AWS Bedrock** ; AES-256-GCM avec rotation ; clés masquées ; page « Fournisseurs » (non lancée) |
 | 9 | 3 stratégies de modèles | ✅ | Routeur + préférences par organisation + simulation de routage |
 | 10, 11 | Modèles locaux, GGUF | 🟡 | Détection runtimes, lecture GGUF via le bridge. ❌ écran de sélection d'un fichier GGUF |
 | 12, 32, 42 | Local Runtime, profil matériel, multiplateforme | 🟡 | ✅ Bridge + profil (NVIDIA, Apple Silicon). CI Linux + job Windows/macOS (non exécuté). ❌ GPU AMD/Intel ; ❌ installeur |
-| 16 | Multimodalité | 🟡 | ✅ pipelines voix→STT→mission et image→vision→mission (`/api/multimodal/prepare`, images dans les messages OpenAI/Anthropic/Bedrock), génération d'image via adaptateur. ❌ vidéo ; ✅ images aussi en mode pull (data: seulement) |
+| 16 | Multimodalité | 🟡 | ✅ pipelines voix→STT→mission et image→vision→mission (`/api/multimodal/prepare`, images dans les messages OpenAI/Anthropic/Bedrock), génération d'image via adaptateur. ✅ vidéo : analyse (images clés + piste audio via ffmpeg → vision + STT, `/api/multimodal/prepare`) et génération (`VideoSpec`, `/api/multimodal/generate-video`, capacité `text-to-video`) — adaptateur au format générique, **non vérifié contre un vrai serveur** ; ✅ images aussi en mode pull (data: seulement) |
 | 17, 18 | Phonon, Sana | 🟡 | Adaptateurs HTTP configurables (convention OpenAI par défaut). **Non vérifiés contre les vrais Phonon/Sana** |
 | 19 | Runtime Registry | 🟡 | En mémoire (bridge). ❌ persistance côté cloud |
 | 20, 21 | Outils et permissions | ✅ | 17 outils, niveaux NONE→ADMIN (agents plafonnés à EXECUTE), audit, boucle d'appel d'outils. Terminal = conteneur Docker isolé (jamais l'hôte). Nécessite un démon Docker |
 | 22 | Validation humaine | 🟡 | ✅ mécanisme + stockage + API + panneau « validation requise ». Non lancé |
 | 23 | Mémoire multi-niveaux | 🟡 | 6 portées + rappel sémantique. Non lancé sur PostgreSQL |
 | 24 | RAG | 🟡 | Découpage, embeddings, recherche hybride RRF ; pré-sélection **pgvector + plein texte** côté PostgreSQL (migration 0004, repli Python). ❌ index vectoriel (dimension variable) ; non exécuté sur une vraie base |
-| 25, 26 | Workflows, automatisations | 🟡 | ✅ moteur, déclencheurs, API, **éditeur visuel** (nœuds typés, dépendances, aperçu du graphe) + mode JSON. ❌ glisser-déposer sur canevas (liste ordonnée + aperçu) ; non lancé |
+| 25, 26 | Workflows, automatisations | 🟡 | ✅ moteur, déclencheurs, API, **éditeur visuel** (nœuds typés, dépendances, aperçu du graphe) + mode JSON. ✅ canevas glisser-déposer (déplacer, relier, supprimer un lien, anti-cycle ; positions dans `ui`) — non exécuté dans un navigateur|
 | 27 | Sandbox | ✅ | Docker, sans réseau, CPU/RAM/PIDs bornés ; erreur explicite si le démon est absent |
 | 28, 29 | Stockage dédupliqué, compressé, chiffré | ✅ | CAS **branché sur l'upload/lecture/suppression** (objets hérités toujours lisibles), suppression des orphelins ; testé sur le disque local. S3 : bug d'instanciation corrigé, non testé en réel |
 | 30 | Quantization Studio | 🟡 | ✅ calculs + API + page (valeurs indicatives, « avec perte »). ❌ quantification réelle |
@@ -38,12 +38,12 @@ Premier réflexe sur votre machine : `make test` puis `docker compose up`, et co
 | 39 | Coûts et budgets | ✅ | Tokens entrée/sortie, modèle réel, coût ; plafond mensuel (bloquer / confirmer) |
 | 40 | Fallback automatique | ✅ | Chaîne configurable + disjoncteur |
 | 41 | Observabilité | 🟡 | Événements de routage et d'agents sélectionnés ; ❌ écran de trace dédié |
-| 43, 44 | Architecture technique | 🟡 | FastAPI, Python, Postgres+pgvector, Redis ✅ ; Control/Execution Plane documenté ; **coque Tauri écrite, non compilée** (pas d'icônes, pas de paquet) |
+| 43, 44 | Architecture technique | 🟡 | FastAPI, Python, Postgres+pgvector, Redis ✅ ; Control/Execution Plane documenté ; **coque Tauri écrite, non compilée** (icônes fournies, pas de paquet) |
 | 46, 47 | Objectif final | 🟡 | Chaîne complète câblée dans le code (sélecteur → routeur → outils → mémoire/RAG → validation) mais **jamais exécutée de bout en bout** |
 
 ## Ordre conseillé pour la suite
 1. Lancer `make test` et `docker compose up`, corriger les écarts d'intégration (base, migrations, worker).
 2. Exécuter les tests d'API et compiler le frontend (`npm ci && ng build`) ; compiler la coque Tauri.
 3. Vérifier Phonon/Sana contre leurs vraies API ; images en mode pull.
-4. Index vectoriel (modèle d'embedding unique), canevas glisser-déposer pour les workflows.
+4. Index vectoriel (modèle d'embedding unique) ; vérifier les adaptateurs Phonon/Sana ; GPU AMD/Intel ; installeurs.
 5. GPU AMD/Intel, installeurs, prompts d'agents affinés.

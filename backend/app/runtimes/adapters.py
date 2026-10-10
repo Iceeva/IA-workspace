@@ -46,6 +46,16 @@ class ImageSpec:
     encoding: str = "base64"          # base64 | url
 
 
+@dataclass
+class VideoSpec:
+    """Génération texte → vidéo par POST JSON. Le défaut suit la même convention que ImageSpec ; à adapter par runtime."""
+    path: str = "/v1/videos/generations"
+    payload: dict = field(default_factory=lambda: {"prompt": "{prompt}", "duration": "{seconds}", "response_format": "b64_json"})
+    video_path: str = "data.0.b64_json"
+    encoding: str = "base64"          # base64 | url
+    max_mb: int = 128
+
+
 async def _httpx_multipart(url, headers, files, data):
     import httpx
     async with httpx.AsyncClient(timeout=300) as c:
@@ -74,10 +84,10 @@ async def _httpx_get(url):
 
 
 class HttpRuntime:
-    def __init__(self, base_url: str, *, stt: SttSpec | None = None, image: ImageSpec | None = None,
+    def __init__(self, base_url: str, *, stt: SttSpec | None = None, image: ImageSpec | None = None, video: VideoSpec | None = None,
                  headers: dict | None = None, post_multipart: PostMultipart = _httpx_multipart,
                  post_json: PostJson = _httpx_json, download: Download = _httpx_get, max_audio_mb: int = 50):
-        self.base, self.stt, self.image, self.headers = base_url.rstrip("/"), stt, image, headers or {}
+        self.base, self.stt, self.image, self.video, self.headers = base_url.rstrip("/"), stt, image, video, headers or {}
         self._mp, self._js, self._dl, self.max_audio = post_multipart, post_json, download, max_audio_mb * 1024 * 1024
 
     async def transcribe(self, audio: bytes, filename: str = "audio.wav", language: str | None = None) -> str:
@@ -112,3 +122,34 @@ class HttpRuntime:
             return base64.b64decode(raw, validate=True)
         except (ValueError, TypeError) as e:
             raise AdapterError("Image base64 invalide") from e
+
+
+    async def generate_video(self, prompt: str, seconds: int = 5) -> bytes:
+        """Texte → vidéo. Le résultat est vérifié (conteneur reconnu, taille bornée) avant d'être rendu."""
+        from app.pipelines.video import VideoError, sniff_video
+        if self.video is None:
+            raise AdapterError("Ce runtime n'est pas configuré pour la génération de vidéos")
+        if not prompt.strip() or len(prompt) > 4000:
+            raise AdapterError("Prompt vide ou trop long")
+        if not 1 <= seconds <= 30:
+            raise AdapterError("Durée demandée : 1 à 30 secondes")
+        spec = self.video
+
+        def fill(v):
+            return v.replace("{prompt}", prompt).replace("{seconds}", str(seconds)) if isinstance(v, str) else v
+        resp = await self._js(self.base + spec.path, self.headers, {k: fill(v) for k, v in spec.payload.items()})
+        raw = dig(resp, spec.video_path)
+        if spec.encoding == "url":
+            data = await self._dl(str(raw))
+        else:
+            try:
+                data = base64.b64decode(raw, validate=True)
+            except (ValueError, TypeError) as e:
+                raise AdapterError("Vidéo base64 invalide") from e
+        if not data or len(data) > spec.max_mb * 1024 * 1024:
+            raise AdapterError("Vidéo vide ou trop volumineuse")
+        try:
+            sniff_video(data)
+        except VideoError as e:
+            raise AdapterError("Le runtime n'a pas renvoyé une vidéo reconnue") from e
+        return data

@@ -79,9 +79,9 @@ async def prepare(text: str = Form(""), files: list[UploadFile] = File(default_f
     c.require(Role.MEMBER)
     blobs = []
     for f in files[:MM.MAX_ATTACHMENTS + 1]:
-        data = await f.read(MM.MAX_IMAGE_BYTES * 4 + 1)
-        if len(data) > MM.MAX_IMAGE_BYTES * 4:
-            raise AppError(413, "ATTACHMENT_TOO_LARGE", "Pièce jointe trop volumineuse")
+        data = await f.read(MM.V.MAX_VIDEO_BYTES + 1)
+        if len(data) > MM.V.MAX_VIDEO_BYTES:
+            raise AppError(413, "ATTACHMENT_TOO_LARGE", "Pièce jointe trop volumineuse (64 Mo maximum)")
         blobs.append((f.filename or "fichier", data))
     st = get_settings()
     transcribe = None
@@ -104,3 +104,29 @@ async def prepare(text: str = Form(""), files: list[UploadFile] = File(default_f
     except MM.MultimodalError as e:
         raise AppError(422, "MULTIMODAL_ERROR", str(e))
     return ok({"mission": prep.mission, "attachments": prep.notes})
+
+
+from pydantic import BaseModel, Field  # noqa: E402
+from fastapi.responses import Response  # noqa: E402
+
+
+class VideoGen(BaseModel):
+    prompt: str = Field(min_length=1, max_length=4000)
+    seconds: int = Field(default=5, ge=1, le=30)
+
+
+@router.post("/multimodal/generate-video")
+async def generate_video(body: VideoGen, c: Ctx = Depends(ctx)):
+    """Texte → vidéo via le runtime configuré par l'opérateur (VIDEO_GEN_URL : Sana vidéo ou serveur compatible)."""
+    from app.runtimes.adapters import AdapterError, HttpRuntime, VideoSpec
+    from app.services.urlcheck import validate_provider_url
+    c.require(Role.MEMBER)
+    st = get_settings()
+    if not st.video_gen_url:
+        raise AppError(503, "VIDEO_UNAVAILABLE", "Aucun runtime de génération vidéo n'est configuré (VIDEO_GEN_URL)")
+    validate_provider_url(st.video_gen_url, allow_private=True)
+    try:
+        data = await HttpRuntime(st.video_gen_url, video=VideoSpec()).generate_video(body.prompt, body.seconds)
+    except AdapterError as e:
+        raise AppError(502, "VIDEO_FAILED", str(e))
+    return Response(data, media_type="video/webm" if data[:4] == b"\x1a\x45\xdf\xa3" else "video/mp4")

@@ -18,7 +18,7 @@ KIND_CAPS = {
     "ollama": {"chat", "code", "embedding"}, "lmstudio": {"chat", "code", "embedding"},
     "llamacpp": {"chat", "code"}, "localai": {"chat", "code", "embedding", "text-to-image", "speech-to-text"},
     "vllm": {"chat", "code"}, "openai_compat": {"chat", "code"},
-    "phonon": {"speech-to-text"}, "sana": {"text-to-image"}, "custom": set()}
+    "phonon": {"speech-to-text"}, "sana": {"text-to-image", "text-to-video"}, "custom": set()}
 
 
 @dataclass

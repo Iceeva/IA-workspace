@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     sandbox_enabled: bool = False
     search_url: str = ""        # instance SearXNG (ex. http://searxng:8080/search) pour l'outil web_search
     github_token: str = ""      # jeton en lecture seule pour l'outil github (facultatif)
+    video_gen_url: str = ""     # serveur de génération vidéo (opérateur) ; vide = génération vidéo indisponible
     stt_url: str = ""           # serveur de transcription (Phonon ou compatible /v1/audio/transcriptions), défini par l'opérateur
     deploy_hooks: str = ""      # JSON {"nom": "https://…hook"} pour l'outil deploy
 
