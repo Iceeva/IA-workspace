@@ -19,14 +19,14 @@ Premier réflexe sur votre machine : `make test` puis `docker compose up`, et co
 | 7, 8 | Fournisseurs, clés chiffrées | ✅ | 15+ types compatibles OpenAI, Anthropic, **Azure OpenAI, AWS Bedrock** ; AES-256-GCM avec rotation ; clés masquées ; page « Fournisseurs » (non lancée) |
 | 9 | 3 stratégies de modèles | ✅ | Routeur + préférences par organisation + simulation de routage |
 | 10, 11 | Modèles locaux, GGUF | 🟡 | Détection runtimes, lecture GGUF via le bridge. ❌ écran de sélection d'un fichier GGUF |
-| 12, 32, 42 | Local Runtime, profil matériel, multiplateforme | 🟡 | ✅ Bridge + profil (NVIDIA, Apple Silicon). CI Linux + job Windows/macOS (non exécuté). ❌ GPU AMD/Intel ; ❌ installeur |
+| 12, 32, 42 | Local Runtime, profil matériel, multiplateforme | 🟡 | ✅ Bridge + profil (NVIDIA, Apple Silicon, **AMD et Intel** : rocm-smi, sysfs, PowerShell/registre Windows ; iGPU = mémoire partagée). ❌ AMD/Intel jamais testés sur du vrai matériel (analyseurs testés sur des sorties types). CI Linux + job Windows/macOS (non exécuté). ❌ GPU AMD/Intel ; ❌ installeur |
 | 16 | Multimodalité | 🟡 | ✅ pipelines voix→STT→mission et image→vision→mission (`/api/multimodal/prepare`, images dans les messages OpenAI/Anthropic/Bedrock), génération d'image via adaptateur. ✅ vidéo : analyse (images clés + piste audio via ffmpeg → vision + STT, `/api/multimodal/prepare`) et génération (`VideoSpec`, `/api/multimodal/generate-video`, capacité `text-to-video`) — adaptateur au format générique, **non vérifié contre un vrai serveur** ; ✅ images aussi en mode pull (data: seulement) |
-| 17, 18 | Phonon, Sana | 🟡 | Adaptateurs HTTP configurables (convention OpenAI par défaut). **Non vérifiés contre les vrais Phonon/Sana** |
+| 17, 18 | Phonon, Sana | 🟡 | **Phonon** : adaptateur aligné sur la doc publiée de `fermion serve` (Whisper-compatible, `phonon-2`, WAV/FLAC/OGG, 32 Mo, clé Bearer ; conversion ffmpeg des autres formats) — non essayé contre un serveur lancé. **Sana** : pas de serveur HTTP officiel → `runtimes/servers/sana_server.py` (diffusers `SanaPipeline`/`SanaVideoPipeline`, appels conformes à la doc) — non exécuté (pas de GPU) |
 | 19 | Runtime Registry | 🟡 | En mémoire (bridge). ❌ persistance côté cloud |
 | 20, 21 | Outils et permissions | ✅ | 17 outils, niveaux NONE→ADMIN (agents plafonnés à EXECUTE), audit, boucle d'appel d'outils. Terminal = conteneur Docker isolé (jamais l'hôte). Nécessite un démon Docker |
 | 22 | Validation humaine | 🟡 | ✅ mécanisme + stockage + API + panneau « validation requise ». Non lancé |
 | 23 | Mémoire multi-niveaux | 🟡 | 6 portées + rappel sémantique. Non lancé sur PostgreSQL |
-| 24 | RAG | 🟡 | Découpage, embeddings, recherche hybride RRF ; pré-sélection **pgvector + plein texte** côté PostgreSQL (migration 0004, repli Python). ❌ index vectoriel (dimension variable) ; non exécuté sur une vraie base |
+| 24 | RAG | 🟡 | Découpage, embeddings, recherche hybride RRF ; pré-sélection **pgvector + plein texte** côté PostgreSQL (migration 0004, repli Python). ❌ index vectoriel (dimension variable) ; non exécuté sur une vraie base ; **index HNSW** sur `embedding_vec vector(EMBEDDING_DIM)` (migration 0005, `python -m app.services.vector_index`), repli automatique si la dimension diffère — non exécuté sur PostgreSQL |
 | 25, 26 | Workflows, automatisations | 🟡 | ✅ moteur, déclencheurs, API, **éditeur visuel** (nœuds typés, dépendances, aperçu du graphe) + mode JSON. ✅ canevas glisser-déposer (déplacer, relier, supprimer un lien, anti-cycle ; positions dans `ui`) — non exécuté dans un navigateur|
 | 27 | Sandbox | ✅ | Docker, sans réseau, CPU/RAM/PIDs bornés ; erreur explicite si le démon est absent |
 | 28, 29 | Stockage dédupliqué, compressé, chiffré | ✅ | CAS **branché sur l'upload/lecture/suppression** (objets hérités toujours lisibles), suppression des orphelins ; testé sur le disque local. S3 : bug d'instanciation corrigé, non testé en réel |
@@ -44,6 +44,6 @@ Premier réflexe sur votre machine : `make test` puis `docker compose up`, et co
 ## Ordre conseillé pour la suite
 1. Lancer `make test` et `docker compose up`, corriger les écarts d'intégration (base, migrations, worker).
 2. Exécuter les tests d'API et compiler le frontend (`npm ci && ng build`) ; compiler la coque Tauri.
-3. Vérifier Phonon/Sana contre leurs vraies API ; images en mode pull.
-4. Index vectoriel (modèle d'embedding unique) ; vérifier les adaptateurs Phonon/Sana ; GPU AMD/Intel ; installeurs.
-5. GPU AMD/Intel, installeurs, prompts d'agents affinés.
+3. Essayer Phonon (`fermion serve`) et le serveur Sana sur une vraie machine.
+4. Premier tag de test pour la CI de release (installeurs) ; signature Windows/macOS ; tester HNSW sur PostgreSQL.
+5. Matériel AMD/Intel réel pour valider la détection.

@@ -23,6 +23,13 @@ fn valid_origin(o: &str) -> bool {
         && o.chars().all(|c| c.is_ascii_alphanumeric() || ":/.-_".contains(c))
 }
 
+/// Bridge embarqué par l'installeur (`bundle.externalBin`) : Tauri le dépose à côté de l'exécutable, sans triplet dans le nom.
+fn bundled_bridge() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let p = exe.parent()?.join(if cfg!(windows) { "aiw-bridge.exe" } else { "aiw-bridge" });
+    p.is_file().then_some(p)
+}
+
 fn running(child: &mut Option<Child>) -> bool {
     match child {
         Some(c) => matches!(c.try_wait(), Ok(None)),
@@ -36,9 +43,17 @@ fn start_bridge(state: State<BridgeState>, models_dir: Option<String>, origin: O
     if running(&mut guard) {
         return Ok(true);
     }
+    // Installeur : exécutable autonome ; développement : `python -m aiw_bridge` (PYTHONPATH=backend:bridge).
     let python = if cfg!(windows) { "python" } else { "python3" };
-    let mut cmd = Command::new(python);
-    cmd.args(["-m", "aiw_bridge"]);
+    let bundled = bundled_bridge();
+    let mut cmd = match &bundled {
+        Some(p) => Command::new(p),
+        None => {
+            let mut c = Command::new(python);
+            c.args(["-m", "aiw_bridge"]);
+            c
+        }
+    };
     // L'application de bureau charge l'interface depuis son propre schéma : on autorise ces origines et le serveur de dev.
     for o in ["tauri://localhost", "http://tauri.localhost", "http://localhost:4200"] {
         cmd.args(["--origin", o]);
@@ -60,7 +75,7 @@ fn start_bridge(state: State<BridgeState>, models_dir: Option<String>, origin: O
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("impossible de lancer le bridge ({python} -m aiw_bridge) : {e}"))?;
+        .map_err(|e| format!("impossible de lancer le bridge ({}) : {e}", if bundled.is_some() { "aiw-bridge" } else { "python -m aiw_bridge" }))?;
     *guard = Some(child);
     Ok(true)
 }

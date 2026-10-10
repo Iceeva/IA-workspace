@@ -107,3 +107,37 @@ def test_image_adapter_base64_and_url_modes():
             run(rt3.generate_image(prompt)); assert False
         except AdapterError:
             pass
+
+
+def test_phonon_spec_follows_documented_server_api():
+    """fermion serve : multipart Whisper, modèle phonon-2, WAV/FLAC/OGG/AIFF, 32 Mo, `language` non envoyé."""
+    calls = []
+    async def mp(url, headers, files, data):
+        calls.append((url, headers, files, data)); return {"text": " salut "}
+    rt = HttpRuntime("http://127.0.0.1:8000", stt=SttSpec.phonon(), headers={"Authorization": "Bearer k"}, post_multipart=mp)
+    assert run(rt.transcribe(b"RIFFdata", "a.wav", "fr")) == "salut"
+    url, headers, files, data = calls[0]
+    assert url == "http://127.0.0.1:8000/v1/audio/transcriptions" and files == {"file": ("a.wav", b"RIFFdata")}
+    assert data == {"model": "phonon-2", "response_format": "json"} and headers["Authorization"] == "Bearer k"
+    for name in ("a.mp3", "a.m4a", "noext"):             # refusés par le serveur : l'adaptateur le dit avant l'envoi
+        try:
+            run(rt.transcribe(b"x", name)); assert False
+        except AdapterError as e:
+            assert "WAV" in str(e)
+    try:
+        run(rt.transcribe(b"x" * (33 * 1024 * 1024), "big.wav")); assert False
+    except AdapterError:
+        pass
+    w = SttSpec.whisper()
+    assert w.language_field == "language" and not w.accepted_ext and w.fields == {"model": "whisper-1"}
+
+
+def test_sana_server_helpers():
+    from app.runtimes.servers.sana_server import parse_size, video_frames
+    assert parse_size("1024x768") == (1024, 768) and parse_size("100x99999") == (256, 2048) and parse_size("1000x1000") == (992, 992)
+    for bad in ("big", "10", "axb"):
+        try:
+            parse_size(bad); assert False
+        except ValueError:
+            pass
+    assert video_frames(5) == 81 and video_frames(1) == 17 and video_frames(999) == video_frames(10) == 161

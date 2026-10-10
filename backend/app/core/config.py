@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     jwt_secret: str
     jwt_refresh_secret: str
+    embedding_dim: int = 1536   # dimension du modèle d'embedding indexé par HNSW (pgvector, ≤ 2000) ; 0 = pas d'index vectoriel
     allow_private_provider_urls: bool = False  # true pour un hébergement local (Ollama sur localhost, etc.)
     encryption_key: str = ""  # clés AES (séparées par des virgules, la première chiffre) ; sinon dérivée de JWT_SECRET
     access_ttl_min: int = 15
@@ -26,6 +27,8 @@ class Settings(BaseSettings):
     search_url: str = ""        # instance SearXNG (ex. http://searxng:8080/search) pour l'outil web_search
     github_token: str = ""      # jeton en lecture seule pour l'outil github (facultatif)
     video_gen_url: str = ""     # serveur de génération vidéo (opérateur) ; vide = génération vidéo indisponible
+    stt_api_key: str = ""       # clé `--api-key` du serveur Phonon (envoyée en Bearer), si définie
+    stt_model: str = "phonon-2"
     stt_url: str = ""           # serveur de transcription (Phonon ou compatible /v1/audio/transcriptions), défini par l'opérateur
     deploy_hooks: str = ""      # JSON {"nom": "https://…hook"} pour l'outil deploy
 

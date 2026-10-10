@@ -74,7 +74,7 @@ async def prepare(text: str = Form(""), files: list[UploadFile] = File(default_f
     """Transforme voix et images en texte exploitable par l'orchestrateur : micro → STT → mission, image → vision → mission.
     La transcription utilise le runtime configuré (STT_URL : Phonon ou serveur compatible) ; l'image, le modèle « vision » choisi par le routeur."""
     from app.api.bridge import get_broker
-    from app.runtimes.adapters import HttpRuntime, SttSpec
+    from app.runtimes.adapters import PHONON_AUDIO_EXT, AdapterError, HttpRuntime, SttSpec
     from app.services.urlcheck import validate_provider_url
     c.require(Role.MEMBER)
     blobs = []
@@ -87,8 +87,19 @@ async def prepare(text: str = Form(""), files: list[UploadFile] = File(default_f
     transcribe = None
     if st.stt_url:
         validate_provider_url(st.stt_url, allow_private=True)   # URL fixée par l'opérateur, pas par l'utilisateur
-        rt = HttpRuntime(st.stt_url, stt=SttSpec())
-        async def transcribe(audio, name): return await rt.transcribe(audio, name)
+        rt = HttpRuntime(st.stt_url, stt=SttSpec.phonon(st.stt_model),
+                         headers={"Authorization": f"Bearer {st.stt_api_key}"} if st.stt_api_key else {})
+        async def transcribe(audio, name):
+            ext = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+            if ext not in PHONON_AUDIO_EXT:       # Phonon refuse mp3/m4a/webm : conversion locale en WAV
+                try:
+                    audio, name = await MM.V.to_wav(audio), "audio.wav"
+                except MM.V.VideoError as e:
+                    raise MM.MultimodalError(str(e))
+            try:
+                return await rt.transcribe(audio, name)
+            except AdapterError as e:
+                raise MM.MultimodalError(f"Transcription impossible : {e}")
     cfgs, _, settings = await A.load_providers(db, c.org_id, c.user.id, get_broker())
     runtime = build_runtime(cfgs, prefs_from_settings(settings))
     describe = None

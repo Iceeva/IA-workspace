@@ -89,7 +89,7 @@ def test_runtimes_file_declares_phonon_and_sana_locally_only():
                                  {"id": "sana", "kind": "sana", "base_url": "http://localhost:9000", "paths": {"image": "/gen"}}]))
         rts = load_runtimes_file(p)
         assert [r.id for r in rts] == ["phonon", "sana"] and rts[0].capabilities == {"speech-to-text"}
-        assert rts[1].capabilities == {"text-to-image"} and rts[1].requirements["paths"] == {"image": "/gen"}
+        assert rts[1].capabilities == {"text-to-image", "text-to-video"} and rts[1].requirements["paths"] == {"image": "/gen"}
         p.write_text(json.dumps([{"id": "evil", "kind": "custom", "base_url": "http://10.0.0.5:9"}]))
         try:
             load_runtimes_file(p); assert False
@@ -105,13 +105,14 @@ def test_media_passthrough_routes_to_declared_runtime():
         def log_message(self, *a): pass
         def do_POST(self):
             got["path"], got["ct"], got["body"] = self.path, self.headers["Content-Type"], self.rfile.read(int(self.headers["Content-Length"]))
+            got["auth"] = self.headers.get("Authorization")
             out = b'{"text":"bonjour"}' if "trans" in self.path else b'{"data":[{"b64_json":"eA=="}]}'
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
     up = ThreadingHTTPServer(("127.0.0.1", 0), Up); threading.Thread(target=up.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{up.server_address[1]}"
     reg = RuntimeRegistry()
     reg.register(RuntimeInfo("phonon", "phonon", "Phonon", base, status="connected", requirements={"paths": {"stt": "/transcribe"}}))
-    reg.register(RuntimeInfo("sana", "sana", "Sana", base, status="connected"))
+    reg.register(RuntimeInfo("sana", "sana", "Sana", base, status="connected", requirements={"api_key": "sk-local"}))
     b = Bridge(TOKEN, ["https://app.example"], [], reg, detect=lambda: None)
     srv = b.serve(port=0); threading.Thread(target=srv.serve_forever, daemon=True).start()
     def post(path, data, ct, token=TOKEN):
@@ -126,6 +127,9 @@ def test_media_passthrough_routes_to_declared_runtime():
         s, body = post("/v1/audio/transcriptions", b"--b\r\nWAVDATA\r\n--b--", "multipart/form-data; boundary=b")
         assert s == 200 and json.loads(body)["text"] == "bonjour" and got["path"] == "/transcribe" and got["ct"].startswith("multipart/")
         assert b"WAVDATA" in got["body"]
+        assert got["auth"] is None                                   # Phonon sans clé : aucun en-tête ajouté
+        s, body = post("/v1/videos/generations", json.dumps({"prompt": "chat", "duration": 5}).encode(), "application/json")
+        assert s == 200 and got["path"] == "/v1/videos/generations" and got["auth"] == "Bearer sk-local"   # clé du runtime ajoutée par le bridge
         s, body = post("/v1/images/generations", json.dumps({"prompt": "chat"}).encode(), "application/json")
         assert s == 200 and got["path"] == "/v1/images/generations" and json.loads(got["body"])["prompt"] == "chat"
         assert post("/v1/audio/transcriptions", b"x", "audio/wav", token=None)[0] == 401
@@ -149,7 +153,22 @@ def test_job_accepts_data_images_only():
         except PullError: pass
 
 
+def test_build_script_resolves_rust_target_triples():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("build_bridge", Path(__file__).resolve().parents[1] / "build_bridge.py")
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    t = m.target_triple
+    assert t("Windows", "AMD64") == "x86_64-pc-windows-msvc" and t("Darwin", "arm64") == "aarch64-apple-darwin"
+    assert t("Linux", "x86_64") == "x86_64-unknown-linux-gnu"
+    assert t("Linux", "x86_64", "rustc 1.80\nhost: aarch64-unknown-linux-gnu\n") == "aarch64-unknown-linux-gnu"   # rustc fait foi
+    try:
+        t("Plan9", "mips"); assert False
+    except SystemExit:
+        pass
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
             f(); print("PASS", n)
+

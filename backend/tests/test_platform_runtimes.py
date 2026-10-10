@@ -153,3 +153,67 @@ def test_benchmark_reports_instability():
     assert rep.success_rate == 0.5 and len(rep.errors) == 2 and "boom" in rep.errors[0]
     dead = asyncio.run(run_benchmark(Fake(fail_every=1), "m", runs=2))
     assert dead.success_rate == 0 and dead.tokens_per_s is None
+
+
+# ---- GPU AMD / Intel ------------------------------------------------------------------------------------------------------
+import json as _json
+import tempfile as _tf
+from pathlib import Path as _P
+
+from app.runtimes import hardware as _H
+
+
+def test_rocm_smi_json_parsing_tolerates_key_variants():
+    t = _json.dumps({"card0": {"Card Series": "Radeon RX 7900 XTX", "VRAM Total Memory (B)": "25753026560"},
+                     "card1": {"Card SKU": "Radeon PRO W7800", "VRAM Total Memory (B)": str(32 * 2**30)}, "system": {"Driver": "6.x"}})
+    g = _H.parse_rocm_smi_json(t)
+    assert [(x.name, x.vram_mb, x.vendor) for x in g] == [("Radeon RX 7900 XTX", 24560, "amd"), ("Radeon PRO W7800", 32768, "amd")]
+    assert _H.parse_rocm_smi_json("pas du json") == [] and _H.parse_rocm_smi_json("[1]") == []
+
+
+def test_drm_sysfs_reads_amd_dgpu_and_intel_igpu_and_skips_nvidia():
+    with _tf.TemporaryDirectory() as d:
+        def card(n, vendor, **files):
+            dev = _P(d) / f"card{n}" / "device"
+            dev.mkdir(parents=True)
+            (dev / "vendor").write_text(vendor + "\n")
+            for k, v in files.items():
+                (dev / k).write_text(str(v))
+        card(0, "0x1002", product_name="AMD Radeon RX 6800", mem_info_vram_total=16 * 2**30, mem_info_gtt_total=8 * 2**30)
+        card(1, "0x8086", device="0x46a6")
+        card(2, "0x10de", product_name="NVIDIA X")
+        (_P(d) / "card0-DP-1").mkdir()                                  # sorties vidéo : ignorées
+        g = _H.read_drm_sysfs(d)
+    assert [(x.vendor, x.vram_mb, x.unified_memory) for x in g] == [("amd", 16384, False), ("intel", 0, True)]
+    assert _H.read_drm_sysfs("/nonexistent") == []
+
+
+def test_windows_gpu_parsing_prefers_64bit_vram_and_ignores_virtual_adapters():
+    a = _json.dumps([{"name": "AMD Radeon RX 7800 XT", "adapter_ram": 4293918720}, {"name": "Intel(R) UHD Graphics 770", "adapter_ram": 1073741824},
+                     {"name": "Microsoft Basic Display Adapter", "adapter_ram": 0}, {"name": "NVIDIA GeForce RTX 4070", "adapter_ram": 4293918720}])
+    b = _json.dumps({"name": "AMD Radeon RX 7800 XT", "vram": 16 * 2**30})          # un seul objet : ConvertTo-Json ne met pas de liste
+    g = _H.parse_windows_gpus(a, b)
+    assert [(x.name, x.vram_mb, x.vendor, x.unified_memory) for x in g] == [
+        ("AMD Radeon RX 7800 XT", 16384, "amd", False), ("Intel(R) UHD Graphics 770", 1024, "intel", True)]
+    assert _H.parse_windows_gpus("", "") == [] and _H.parse_windows_gpus("{oups", "") == []
+
+
+def test_detect_gpus_linux_amd_with_rocm_and_intel_igpu_shares_system_memory():
+    with _tf.TemporaryDirectory() as d:
+        dev = _P(d) / "card0" / "device"; dev.mkdir(parents=True)
+        (dev / "vendor").write_text("0x8086")
+        def run(cmd):
+            return None                                                       # ni rocm-smi ni sycl-ls
+        g, accel = _H.detect_gpus("Linux", 16000, run, d)
+        assert g[0].vendor == "intel" and g[0].vram_mb == 8000 and accel == ["vulkan"]
+        rocm = _json.dumps({"card0": {"Card Series": "Radeon RX 7900", "VRAM Total Memory (B)": str(24 * 2**30)}})
+        g, accel = _H.detect_gpus("Linux", 16000, lambda c: rocm if c[0] == "rocm-smi" else None, d)
+        assert g[0].vram_mb == 24576 and accel == ["rocm", "vulkan"]
+        g, accel = _H.detect_gpus("Linux", 16000, lambda c: "x" if c[0] == "sycl-ls" else None, d)
+        assert accel == ["sycl", "vulkan"]
+    assert _H.detect_gpus("Darwin", 16000, lambda c: None) == ([], [])
+
+
+def test_amd_gpu_changes_model_fit():
+    p = _H.HardwareProfile("Linux", "6", "x86_64", "cpu", 8, 16000, 12000, 100.0, [_H.GPU("Radeon RX 7900", 24576, "amd")], ["vulkan"])
+    assert _H.fit(p, 10) == "gpu_full" and _H.fit(p, 30) == "gpu_partial"

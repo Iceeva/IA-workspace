@@ -7,6 +7,7 @@ import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
 import { streamChat } from '../../core/chat-stream';
 import { Toast } from '../../core/toast.service';
+import { isMedia, mediaKind, tooBig } from '../../core/media';
 
 interface Msg { role: 'user' | 'assistant'; content: string; }
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -44,17 +45,20 @@ const md = new Marked({ renderer: { html: ({ text }) => esc(text),
   </div>
   <form (ngSubmit)="send()" class="composer">
     <textarea rows="3" [(ngModel)]="draft" name="draft" aria-label="Message" (keydown.control.enter)="send()" placeholder="Votre message (Ctrl+Entrée pour envoyer)"></textarea>
-    <div class="row"><label class="btn ghost small">Joindre un fichier<input type="file" hidden (change)="attach($any($event.target).files[0])"></label>
+    <div class="row"><span class="grp"><label class="btn ghost small">Joindre un fichier<input type="file" hidden (change)="attach($any($event.target).files[0]); $any($event.target).value = ''"></label>
+        <button type="button" class="btn ghost small" (click)="toggleRec()" [attr.aria-pressed]="rec()">{{ rec() ? '■ Arrêter l’enregistrement' : '🎙 Dicter' }}</button>
+        @if (analysing()) { <span class="muted" role="status">Analyse du média…</span> }</span>
       @if (busy()) { <button type="button" class="btn danger" (click)="stop()">Arrêter</button> } @else { <button class="btn" [disabled]="!draft.trim()">Envoyer</button> }</div>
   </form>`,
   styles: [`.bar { display: flex; gap: .5rem; flex-wrap: wrap; } .log { display: grid; gap: 1rem; margin-bottom: 1rem; max-width: 52rem; }
     .m { background: var(--sheet); border: 1px solid var(--rule); padding: .8rem 1rem; } .m.user { border-left: 3px solid var(--titration); }
     header { display: flex; justify-content: space-between; } .acts button { background: none; border: 0; color: var(--titration); cursor: pointer; font-size: .85rem; }
-    .composer { max-width: 52rem; display: grid; gap: .6rem; } textarea { width: 100%; background: var(--sheet); border: 1px solid var(--rule); padding: .6rem; border-radius: 3px; } .row { display: flex; justify-content: space-between; }`],
+    .composer { max-width: 52rem; display: grid; gap: .6rem; } textarea { width: 100%; background: var(--sheet); border: 1px solid var(--rule); padding: .6rem; border-radius: 3px; } .row { display: flex; justify-content: space-between; } .grp { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }`],
 })
 export class Chat {
   private api = inject(ApiService); private auth = inject(AuthService); private router = inject(Router); private toast = inject(Toast);
-  agents = signal<any[]>([]); projects = signal<any[]>([]); msgs = signal<Msg[]>([]); busy = signal(false);
+  agents = signal<any[]>([]); projects = signal<any[]>([]); msgs = signal<Msg[]>([]); busy = signal(false); analysing = signal(false); rec = signal(false);
+  private recorder?: MediaRecorder; private chunks: Blob[] = [];
   mode: 'single' | 'team' = 'single'; agentId = ''; projectId = ''; draft = '';
   private conv = crypto.randomUUID().replaceAll('-', ''); private ctrl?: AbortController;
   private log = viewChild<ElementRef<HTMLElement>>('log');
@@ -71,9 +75,32 @@ export class Chat {
   stop() { this.ctrl?.abort(); }
   attach(file?: File) {
     if (!file) return;
+    if (isMedia(file)) return this.analyse(file);          // image, audio, vidéo : transformés en texte pour l'orchestrateur
     const f = new FormData(); f.append('file', file); f.append('path', `attachments/${file.name}`);
     if (this.projectId) f.append('project_id', this.projectId);
     this.api.upload<{ path: string }>('/api/files', f).subscribe(r => { this.draft += `\n[Fichier joint : ${r.data.path}]`; this.toast.info('Fichier ajouté et indexé'); });
+  }
+  /** Voix → STT, image → modèle de vision, vidéo → images clés + piste audio : le résultat devient le texte du message. */
+  private analyse(file: File) {
+    if (tooBig(file)) { this.toast.error('Média trop volumineux (64 Mo maximum).'); return; }
+    const f = new FormData(); f.append('text', this.draft); f.append('files', file, file.name);
+    this.analysing.set(true);
+    this.api.upload<{ mission: string; attachments: { name: string; kind: string }[] }>('/api/multimodal/prepare', f).subscribe({
+      next: r => { this.draft = r.data.mission; this.analysing.set(false); this.toast.info(`${mediaKind(file) === 'video' ? 'Vidéo' : mediaKind(file) === 'audio' ? 'Audio' : 'Image'} analysé(e) : relisez le texte avant d’envoyer`); },
+      error: () => this.analysing.set(false),
+    });
+  }
+  async toggleRec() {
+    if (this.recorder && this.rec()) { this.recorder.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.chunks = []; this.recorder = new MediaRecorder(stream);
+      this.recorder.ondataavailable = e => this.chunks.push(e.data);
+      this.recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); this.rec.set(false);
+        const type = this.recorder?.mimeType || 'audio/webm';
+        this.analyse(new File(this.chunks, `dictee.${type.includes('ogg') ? 'ogg' : 'webm'}`, { type })); };
+      this.recorder.start(); this.rec.set(true);
+    } catch { this.toast.error('Micro indisponible ou refusé.'); }
   }
   async send() {
     const text = this.draft.trim(); if (!text || this.busy()) return;

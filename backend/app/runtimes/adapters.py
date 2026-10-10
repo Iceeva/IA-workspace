@@ -1,9 +1,11 @@
-"""Adaptateurs HTTP configurables pour les runtimes vocaux et image (§17, §18) : Phonon, Sana ou tout autre serveur.
+"""Adaptateurs HTTP configurables pour les runtimes vocaux et image/vidéo (§17, §18) : Phonon, Sana ou tout autre serveur.
 
-Le protocole exact de ces moteurs n'est pas figé dans le code : on décrit leur API dans une configuration
-(chemin, noms de champs, chemin de la réponse). Les valeurs par défaut suivent la convention OpenAI
-(/v1/audio/transcriptions, /v1/images/generations), que de nombreux serveurs locaux imitent. Adaptez la
-configuration à l'API réelle de votre moteur ; elle n'a pas été vérifiée contre Phonon ou Sana eux-mêmes."""
+L'API de chaque moteur est décrite par une configuration (chemin, champs, chemin de la réponse).
+- Phonon : `SttSpec.phonon()` suit la documentation du serveur `fermion serve` (POST /v1/audio/transcriptions, requête
+  multipart au format Whisper, modèle « phonon-2 », audio WAV/FLAC/OGG/AIFF, corps ≤ 32 Mo, `language` non implémenté,
+  clé via `Authorization: Bearer`). Vérifié sur la documentation publiée, pas contre un serveur lancé ici.
+- Sana : aucun serveur HTTP officiel n'existe (bibliothèque diffusers). `runtimes/servers/sana_server.py` en fournit un,
+  qui expose `/v1/images/generations` et `/v1/videos/generations` : les défauts `ImageSpec`/`VideoSpec` y correspondent."""
 from __future__ import annotations
 import base64
 from dataclasses import dataclass, field
@@ -29,13 +31,27 @@ def dig(data, path: str):
     return cur
 
 
+PHONON_AUDIO_EXT = {".wav", ".flac", ".ogg", ".aiff", ".aif"}   # décodables par libsndfile ; mp3/m4a sont refusés par le serveur
+
+
 @dataclass
 class SttSpec:
     path: str = "/v1/audio/transcriptions"
     file_field: str = "file"
-    fields: dict = field(default_factory=lambda: {"model": "whisper-1"})
-    language_field: str | None = "language"
+    fields: dict = field(default_factory=lambda: {"model": "phonon-2", "response_format": "json"})
+    language_field: str | None = None     # Phonon : `language` accepté mais non implémenté → on ne l'envoie pas
     text_path: str = "text"
+    accepted_ext: frozenset = frozenset(PHONON_AUDIO_EXT)   # autres formats : à convertir en WAV avant l'envoi
+    max_mb: int = 32                      # plafond du corps de requête de `fermion serve`
+
+    @classmethod
+    def phonon(cls, model: str = "phonon-2") -> "SttSpec":
+        return cls(fields={"model": model, "response_format": "json"})
+
+    @classmethod
+    def whisper(cls, model: str = "whisper-1") -> "SttSpec":
+        """Serveur compatible Whisper/OpenAI : accepte aussi `language` et plus de formats."""
+        return cls(fields={"model": model}, language_field="language", accepted_ext=frozenset(), max_mb=25)
 
 
 @dataclass
@@ -61,8 +77,17 @@ async def _httpx_multipart(url, headers, files, data):
     async with httpx.AsyncClient(timeout=300) as c:
         r = await c.post(url, headers=headers, files=files, data=data)
     if r.status_code >= 400:
-        raise AdapterError(f"HTTP {r.status_code}")
+        raise AdapterError(_http_error(r))
     return r.json()
+
+
+def _http_error(r) -> str:
+    """Message d'erreur du serveur (enveloppe OpenAI {"error": {"message"}}) tronqué, sinon le code HTTP."""
+    try:
+        m = r.json()["error"]["message"]
+        return f"HTTP {r.status_code} : {str(m)[:200]}"
+    except Exception:  # noqa: BLE001
+        return f"HTTP {r.status_code}"
 
 
 async def _httpx_json(url, headers, payload):
@@ -70,7 +95,7 @@ async def _httpx_json(url, headers, payload):
     async with httpx.AsyncClient(timeout=600) as c:
         r = await c.post(url, headers=headers, json=payload)
     if r.status_code >= 400:
-        raise AdapterError(f"HTTP {r.status_code}")
+        raise AdapterError(_http_error(r))
     return r.json()
 
 
@@ -93,9 +118,12 @@ class HttpRuntime:
     async def transcribe(self, audio: bytes, filename: str = "audio.wav", language: str | None = None) -> str:
         if self.stt is None:
             raise AdapterError("Ce runtime n'est pas configuré pour la transcription")
-        if not audio or len(audio) > self.max_audio:
-            raise AdapterError("Audio vide ou trop volumineux")
         s = self.stt
+        if not audio or len(audio) > min(self.max_audio, s.max_mb * 1024 * 1024):
+            raise AdapterError(f"Audio vide ou supérieur à {s.max_mb} Mo")
+        ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if s.accepted_ext and ext not in s.accepted_ext:
+            raise AdapterError(f"Format « {ext or 'inconnu'} » non accepté par ce moteur : convertissez en WAV (16 kHz mono)")
         data = dict(s.fields)
         if language and s.language_field:
             data[s.language_field] = language

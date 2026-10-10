@@ -101,3 +101,18 @@ async def extract(data: bytes, *, frames: int = DEFAULT_FRAMES) -> dict:
         return {"duration": info["duration"], "frames": imgs, "audio": wav}
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+async def to_wav(data: bytes) -> bytes:
+    """Tout audio (mp3, m4a, webm…) → WAV 16 kHz mono : le format que les serveurs de transcription lisent partout.
+    Même durcissement que pour la vidéo ; 17 minutes de WAV 16 bits tiennent dans 32 Mo."""
+    d = tempfile.mkdtemp(prefix="aiw-audio-")
+    try:
+        src, dst = os.path.join(d, "in.bin"), os.path.join(d, "a.wav")
+        with open(src, "wb") as f:
+            f.write(data)
+        await _run("ffmpeg", "-nostdin", *_SAFE, "-i", src, "-vn", "-ac", "1", "-ar", "16000", "-t", "1020", "-y", dst)
+        with open(dst, "rb") as f:
+            return f.read()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)

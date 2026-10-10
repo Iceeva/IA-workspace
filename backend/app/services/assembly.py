@@ -115,6 +115,10 @@ async def ensure_embeddings(db, org_id: uuid.UUID, embedder, limit: int = 200) -
     vecs = await embedder.embed([c.content for c in chunks])
     for c, v in zip(chunks, vecs):
         c.embedding, c.embed_model = v, embedder.name
+    await db.flush()                                   # les lignes doivent exister avant l'UPDATE de la colonne vectorielle
+    from app.core.config import get_settings
+    from app.services import vector_index as VI
+    await VI.store(db, [(c.id, v) for c, v in zip(chunks, vecs)], get_settings().embedding_dim)
     return len(chunks)
 
 
@@ -124,6 +128,21 @@ async def _pg_candidates(db, org_id: uuid.UUID, query: str, qvec: list[float], m
     if db.bind is None or db.bind.dialect.name != "postgresql":
         return None
     from sqlalchemy import text
+    from app.core.config import get_settings
+    from app.services import vector_index as VI
+    ann = await VI.nearest(db, org_id, qvec, model, project_id, get_settings().embedding_dim, limit)   # index HNSW
+    if ann is not None:
+        try:
+            async with db.begin_nested():
+                proj = "AND f.project_id = :proj" if project_id else ""
+                fts = (await db.execute(text(
+                    "SELECT c.id FROM file_chunks c JOIN files f ON f.id = c.file_id WHERE c.organization_id = :org AND f.deleted_at IS NULL "
+                    f"{proj} AND to_tsvector('simple', c.content) @@ plainto_tsquery('simple', :text) "
+                    "ORDER BY ts_rank(to_tsvector('simple', c.content), plainto_tsquery('simple', :text)) DESC LIMIT :lim"),
+                    {"org": org_id, "text": query, "lim": limit, **({"proj": project_id} if project_id else {})})).scalars().all()
+            return list(dict.fromkeys([*ann, *fts]))
+        except Exception:  # noqa: BLE001
+            pass
     try:
         async with db.begin_nested():   # un échec (extension absente…) n'invalide pas la transaction appelante
             if not (await db.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'"))).first():

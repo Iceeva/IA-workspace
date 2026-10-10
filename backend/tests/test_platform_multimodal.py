@@ -151,3 +151,11 @@ def test_generate_video_adapter_validates_output():
             assert False
         except AdapterError:
             pass
+
+
+def test_dictation_webm_audio_only_needs_no_vision_model():
+    """Une dictée du navigateur est un WebM sans piste vidéo : transcription seule, sans modèle de vision."""
+    async def extract(data): return {"duration": 3.0, "frames": [], "audio": b"RIFFwav"}
+    async def transcribe(a, n): return "note vocale"
+    p = asyncio.run(MM.prepare_mission("", [("dictee.webm", b"\x1a\x45\xdf\xa3....")], transcribe=transcribe, describe=None, extract=extract))
+    assert "note vocale" in p.mission and 'type="video-transcript"' in p.mission and p.notes[0]["chars"] == len("note vocale")

@@ -28,11 +28,12 @@ VERSION = "0.1.0"
 MAX_BODY = 5 * 1024 * 1024
 MAX_MEDIA_BODY = 60 * 1024 * 1024     # audio entrant (transcription)
 # route du bridge → (capacité requise, chemin chez le runtime). Le chemin peut être surchargé dans runtimes.json.
-MEDIA_ROUTES = {"/v1/audio/transcriptions": ("speech-to-text", "stt"), "/v1/images/generations": ("text-to-image", "image")}
+MEDIA_ROUTES = {"/v1/audio/transcriptions": ("speech-to-text", "stt"), "/v1/images/generations": ("text-to-image", "image"),
+                "/v1/videos/generations": ("text-to-video", "video")}
 
 
 def load_runtimes_file(path: str | Path) -> list[RuntimeInfo]:
-    """Runtimes déclarés (Phonon, Sana, autres) : [{id, kind, name, base_url, capabilities?, paths?:{stt,image}}]."""
+    """Runtimes déclarés (Phonon, Sana, autres) : [{id, kind, name, base_url, capabilities?, api_key?, paths?:{stt,image,video}}]."""
     p = Path(path).expanduser()
     if not p.is_file():
         return []
@@ -43,7 +44,7 @@ def load_runtimes_file(path: str | Path) -> list[RuntimeInfo]:
             raise ValueError(f"Runtime {d.get('id')}: seules les adresses locales sont autorisées")
         out.append(RuntimeInfo(id=str(d["id"]), kind=d.get("kind", "custom"), name=d.get("name", d["id"]), base_url=url,
                                status="connected", capabilities=set(d.get("capabilities") or KIND_CAPS.get(d.get("kind", "custom"), set())),
-                               requirements={"paths": d.get("paths", {})}))
+                               requirements={"paths": d.get("paths", {}), "api_key": str(d.get("api_key") or "")}))
     return out
 
 
@@ -226,8 +227,10 @@ def _handler(b: Bridge):
             if rt is None:
                 return self._err(404, "RUNTIME_NOT_FOUND", f"Aucun runtime local déclaré pour « {cap} »")
             target = rt.base_url.rstrip("/") + (rt.requirements.get("paths", {}).get(key) or path)
-            req = urllib.request.Request(target, self.rfile.read(n), {
-                "Content-Type": self.headers.get("Content-Type", "application/octet-stream")}, method="POST")
+            hdrs = {"Content-Type": self.headers.get("Content-Type", "application/octet-stream")}
+            if rt.requirements.get("api_key"):          # clé du runtime local (jamais exposée au navigateur)
+                hdrs["Authorization"] = "Bearer " + rt.requirements["api_key"]
+            req = urllib.request.Request(target, self.rfile.read(n), hdrs, method="POST")
             try:
                 up = urllib.request.urlopen(req, timeout=600)  # noqa: S310 — cible issue du registre local
             except urllib.error.HTTPError as e:
