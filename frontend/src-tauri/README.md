@@ -6,9 +6,10 @@ Coque native autour de l'interface Angular, avec pilotage du Local Bridge (`star
 ```bash
 cargo install tauri-cli --version "^2"
 cd frontend && npm ci
-cargo tauri icon chemin/vers/logo.png     # génère src-tauri/icons (obligatoire pour le paquet)
 cargo tauri dev                           # développement
 cargo tauri build                         # .msi/.exe (Windows), .dmg (macOS), .deb/.AppImage (Linux)
 ```
+
+Les icônes (`icons/`) sont fournies ; pour utiliser votre logo : `cargo tauri icon icons/logo-source.png` (remplacez le fichier source).
 
 Prérequis : Rust, les dépendances système de Tauri (https://tauri.app/start/prerequisites/) et Python 3.10+ avec `pip install ./bridge`.

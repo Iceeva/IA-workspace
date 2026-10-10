@@ -10,7 +10,16 @@
     "frontendDist": "../dist/app/browser"
   },
   "app": {
-    "windows": [{ "label": "main", "title": "AI Workspace", "width": 1280, "height": 820, "minWidth": 900, "minHeight": 600 }],
+    "windows": [
+      {
+        "label": "main",
+        "title": "AI Workspace",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 600
+      }
+    ],
     "security": {
       "csp": "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' http://127.0.0.1:8765 http://localhost:8000 https:; worker-src 'self' blob:"
     }
@@ -18,6 +27,13 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "category": "DeveloperTool"
+    "category": "DeveloperTool",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   }
 }

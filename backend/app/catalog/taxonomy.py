@@ -1,11 +1,13 @@
 """Taxonomie qui génère le catalogue intégré (> 1 000 définitions).
 
-Les définitions sont produites à partir de listes de sujets × rôles : elles décrivent *ce que l'agent sait faire*
-et ses contraintes, mais leurs prompts sont volontairement génériques. Pour affiner un agent, créez-en une
-version personnalisée (même `domain`, `source="custom"`) ou ajoutez un fichier JSON (voir `catalog.load_json`).
+Les définitions sont produites à partir de listes de sujets × rôles. Chaque agent reçoit un prompt structuré
+(`prompts.py`) alimenté par des connaissances propres à son sujet (`prompt_specialists.py`, `prompt_stacks.py`).
+Pour affiner encore un agent, créez-en une version personnalisée (même `domain`, `source="custom"`) ou ajoutez un
+fichier JSON (voir `catalog.load_json`).
 """
 from __future__ import annotations
 from .model import AgentDef, Permission
+from .prompts import specialist_prompt, stack_prompt
 
 # (nom affiché, mots-clés supplémentaires). Le premier mot-clé est toujours le nom lui-même.
 _LANGS = ("Python|py;JavaScript|js;TypeScript|ts;Java;Kotlin;Swift;C|clang;C++|cpp;C#|csharp;Go|golang;Rust;PHP;"
@@ -147,7 +149,7 @@ def build_default_catalog() -> list[AgentDef]:
                     tools=_tools_for(category, role_kind), inputs=inputs, outputs=outputs,
                     permission_level=max([p for _, p in _tools_for(category, role_kind)] or [int(Permission.READ)]),
                     est_tokens=6000 if role_kind in ("build", "specialist") else 3500,
-                    system_prompt=f"Tu es {full}. {_ROLE_PROMPT[role_kind]}"))
+                    system_prompt=stack_prompt(name, role_name, role_kind, category, _tools_for(category, role_kind))))
     for category, raw in _SPECIALISTS.items():
         for name in raw.split(";"):
             domain = _slug(name)
@@ -164,5 +166,5 @@ def build_default_catalog() -> list[AgentDef]:
                 permission_level=max([p for _, p in tools] or [int(Permission.READ)]),
                 est_tokens=8000 if category == "Research" else 4000, needs_gpu=gpu, min_ram_gb=16.0 if gpu else 0.0,
                 local_ok=True, cloud_ok=True, sensitive=sensitive,
-                system_prompt=f"Tu es {name}. " + guard + (" " + _ROLE_PROMPT["test"] if name == "Testing Engineer" else "")))
+                system_prompt=specialist_prompt(name, category, tools, guard, tester=name == "Testing Engineer")))
     return out
