@@ -355,3 +355,22 @@ class ApprovalRequest(Mixin, Base):
     status: Mapped[str] = mapped_column(String(12), default="PENDING")   # PENDING APPROVED DENIED EXPIRED
     decided_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RuntimeRecord(Base):
+    """Registre des runtimes (§19) persistant côté serveur : ce que le Local Bridge d'un utilisateur a déclaré, avec sa dernière vue."""
+    __tablename__ = "runtime_records"
+    __table_args__ = (UniqueConstraint("organization_id", "user_id", "runtime_id", name="uq_runtime_org_user_rid"),)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    runtime_id: Mapped[str] = mapped_column(String(60))
+    kind: Mapped[str] = mapped_column(String(30))
+    name: Mapped[str] = mapped_column(String(80))
+    base_url: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[str] = mapped_column(String(20), default="unknown")
+    version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    capabilities: Mapped[list] = mapped_column(JSON, default=list)
+    models: Mapped[list] = mapped_column(JSON, default=list)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

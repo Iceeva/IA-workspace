@@ -12,6 +12,7 @@ jobs:
       - run: cd backend && pytest -q
       - run: PYTHONPATH=backend python bridge/tests/test_bridge.py
       - run: PYTHONPATH=backend:bridge python bridge/tests/test_pull.py
+      - run: PYTHONPATH=backend:bridge python bridge/tests/test_quantize.py
   portable:   # §42 : le cœur (hors base de données) doit tourner sous Windows et macOS
     strategy:
       fail-fast: false

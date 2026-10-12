@@ -2,6 +2,7 @@ import { Component, OnDestroy, inject, signal } from '@angular/core';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { ApiService } from '../../core/api.service';
+import { pushSample, sparklinePath } from '../../core/sparkline';
 
 @Component({
   selector: 'app-dashboard', imports: [RouterLink, DatePipe, DecimalPipe],
@@ -11,8 +12,10 @@ import { ApiService } from '../../core/api.service';
     <dl class="readings">
       <div><dt>Projets</dt><dd>{{ u()?.projects ?? '—' }}</dd></div>
       <div><dt>Agents configurés</dt><dd>{{ u()?.agents ?? '—' }}</dd></div>
-      <div><dt>Tâches en cours</dt><dd>{{ d.running_tasks }}</dd></div>
-      <div><dt>Exécutions actives</dt><dd>{{ d.active_executions }}</dd></div>
+      <div><dt>Tâches en cours</dt><dd>{{ d.running_tasks }}</dd>
+        <svg class="spark" viewBox="0 0 160 36" role="img" [attr.aria-label]="'Tâches en cours sur les 5 dernières minutes'"><path [attr.d]="path(tasks())" fill="none" stroke="var(--titration)" stroke-width="2"/></svg></div>
+      <div><dt>Exécutions actives</dt><dd>{{ d.active_executions }}</dd>
+        <svg class="spark" viewBox="0 0 160 36" role="img" [attr.aria-label]="'Exécutions actives sur les 5 dernières minutes'"><path [attr.d]="path(execs())" fill="none" stroke="var(--titration)" stroke-width="2"/></svg></div>
       <div><dt>Tokens (mois)</dt><dd>{{ (u()?.tokens ?? 0) | number }}</dd></div>
     </dl>
     <div class="grid-2">
@@ -32,13 +35,15 @@ import { ApiService } from '../../core/api.service';
         <td><span class="status" [class]="e.status">{{ e.status }}</span></td><td>{{ e.tokens | number }}</td><td>{{ e.created_at | date:'short' }}</td></tr> }</tbody></table></div>
   } @else { <p>Chargement…</p> }`,
   styles: [`.readings { display: flex; flex-wrap: wrap; gap: 2.5rem; margin: 0 0 2.5rem; padding: 0; } .readings div { border-top: 2px solid var(--ink); padding-top: .5rem; min-width: 8rem; }
-    dt { color: var(--ink-soft); } dd { margin: 0; font: 2rem var(--serif); } .monitor { list-style: none; padding: 0; } .monitor li { display: flex; justify-content: space-between; border-bottom: 1px solid var(--rule); padding: .4rem 0; }`],
+    dt { color: var(--ink-soft); } dd { margin: 0; font: 2rem var(--serif); } .spark { width: 10rem; height: 2.2rem; display: block; margin-top: .3rem; } .monitor { list-style: none; padding: 0; } .monitor li { display: flex; justify-content: space-between; border-bottom: 1px solid var(--rule); padding: .4rem 0; }`],
 })
 export class Dashboard implements OnDestroy {
   private api = inject(ApiService);
-  d = signal<any>(null); u = signal<any>(null);
+  d = signal<any>(null); u = signal<any>(null); tasks = signal<number[]>([]); execs = signal<number[]>([]);
+  path = (v: number[]) => sparklinePath(v);
   private t = setInterval(() => this.load(), 5000);
   constructor() { this.load(); this.api.get<any>('/api/usage').subscribe(r => this.u.set(r.data)); }
-  private load() { this.api.get<any>('/api/dashboard').subscribe(r => this.d.set(r.data)); }
+  private load() { this.api.get<any>('/api/dashboard').subscribe(r => { this.d.set(r.data);
+    this.tasks.update(s => pushSample(s, r.data.running_tasks ?? 0)); this.execs.update(s => pushSample(s, r.data.active_executions ?? 0)); }); }
   ngOnDestroy() { clearInterval(this.t); }
 }

@@ -26,4 +26,7 @@ export class BridgeClient {
   hardware() { return this.call<any>('/hardware'); }
   runtimes() { return this.call<any[]>('/runtimes'); }
   gguf() { return this.call<any[]>('/gguf'); }
+  quantizeStatus() { return this.call<{ types: string[]; available: boolean; jobs: any[] }>('/quantize'); }
+  quantizeStart(path: string, type: string, allow_requantize = false) { return this.call<any>('/quantize', { method: 'POST', body: JSON.stringify({ path, type, allow_requantize }) }); }
+  quantizeCancel(id: string) { return this.call<any>('/quantize/cancel', { method: 'POST', body: JSON.stringify({ id }) }); }
 }

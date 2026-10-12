@@ -39,6 +39,7 @@ class RuntimeInfo:
     def to_dict(self) -> dict:
         d = self.__dict__.copy()
         d["capabilities"] = sorted(self.capabilities)
+        d["requirements"] = {k: v for k, v in self.requirements.items() if k != "api_key"}   # jamais de clé vers le navigateur
         return d
 
 

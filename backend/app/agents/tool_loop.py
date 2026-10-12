@@ -6,7 +6,8 @@ données non fiables (mitigation d'injection de prompt)."""
 from __future__ import annotations
 import json
 import re
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 from app.llm.base import Message
 from app.tools.registry import ApprovalDenied, PermissionDenied, ToolError
@@ -22,6 +23,7 @@ class LoopResult:
     tokens_out: int
     model: str
     steps: int
+    calls: list = field(default_factory=list)   # [{tool, action, ok, ms}] : trace (§41), sans arguments ni résultats
 
 
 def tool_instructions(toolbox) -> str:
@@ -49,17 +51,19 @@ def parse_tool_call(text: str) -> dict | None:
 async def run_with_tools(agent, messages: list[Message], max_steps: int = 6) -> LoopResult:
     t_in = t_out = 0
     r = None
+    calls: list[dict] = []
     for step in range(max_steps + 1):
         r = await agent.provider.chat(messages, model=agent.model, temperature=agent.temperature)
         t_in, t_out = t_in + r.prompt_tokens, t_out + r.completion_tokens
         call = parse_tool_call(r.content)
         if call is None:
-            return LoopResult(r.content, t_in, t_out, r.model, step)
+            return LoopResult(r.content, t_in, t_out, r.model, step, calls)
         if step == max_steps:
-            return LoopResult(r.content + "\n\n[limite d'appels d'outils atteinte]", t_in, t_out, r.model, step)
+            return LoopResult(r.content + "\n\n[limite d'appels d'outils atteinte]", t_in, t_out, r.model, step, calls)
         if "error" in call:
             result, ok = call["error"], False
         else:
+            t0 = time.monotonic()
             try:
                 value = await agent.toolbox.call(call["tool"], call["action"], **call["args"])
                 result, ok = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str), True
@@ -67,6 +71,8 @@ async def run_with_tools(agent, messages: list[Message], max_steps: int = 6) -> 
                 result, ok = f"REFUS/ERREUR : {e}", False
             except TypeError as e:  # arguments incorrects
                 result, ok = f"Arguments invalides : {e}", False
+        calls.append({"tool": str(call.get("tool", "?"))[:40], "action": str(call.get("action", "?"))[:40], "ok": ok,
+                      "ms": int((time.monotonic() - t0) * 1000) if "error" not in call else 0})
         label = f'{call.get("tool", "?")}.{call.get("action", "?")}'
         messages = [*messages, Message("assistant", r.content),
                     Message("user", f'<tool_result tool="{label}" ok="{str(ok).lower()}">\n{result[:MAX_RESULT_CHARS]}\n</tool_result>')]

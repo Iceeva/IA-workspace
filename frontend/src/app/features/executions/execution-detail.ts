@@ -1,6 +1,7 @@
 import { Component, OnDestroy, computed, inject, input, signal } from '@angular/core';
 import { ApiService, ExecEvent, ExecutionDto, TaskDto } from '../../core/api.service';
 import { layoutGraph } from '../../core/graph-layout';
+import { ExecutionTrace } from './execution-trace';
 
 const TERMINAL = ['COMPLETED', 'FAILED', 'CANCELLED'];
 const LABEL: Record<string, string> = { PENDING: 'En attente', QUEUED: 'En file', RUNNING: 'En cours', WAITING: 'En attente', COMPLETED: 'Terminée',
@@ -8,7 +9,7 @@ const LABEL: Record<string, string> = { PENDING: 'En attente', QUEUED: 'En file'
 const FILL: Record<string, string> = { COMPLETED: 'var(--culture)', FAILED: 'var(--flag)', RUNNING: 'var(--reagent)' };
 
 @Component({
-  selector: 'app-execution-detail',
+  selector: 'app-execution-detail', imports: [ExecutionTrace],
   template: `
   @if (exec(); as e) {
     <header class="head">
@@ -52,6 +53,9 @@ const FILL: Record<string, string> = { COMPLETED: 'var(--culture)', FAILED: 'var
     }
     @if (e.error) { <p class="error" role="alert">{{ e.error }}</p> }
     @if (e.result) { <h2>Résultat</h2><pre class="result">{{ e.result }}</pre> }
+
+    <details class="panel" style="margin: 1.5rem 0"><summary><strong>Trace : comment cette réponse a été produite</strong></summary>
+      <app-execution-trace [executionId]="id()" [version]="events().length" /></details>
 
     <h2>Journal</h2>
     <div class="table-wrap"><table class="ledger"><thead><tr><th>#</th><th>Événement</th><th>Détail</th></tr></thead>

@@ -161,6 +161,8 @@ class Orchestrator:
             node.output, node.tokens, node.duration_ms = res.output, res.tokens, res.duration_ms
             node.tokens_in, node.tokens_out, node.model = res.tokens_in, res.tokens_out, res.model
             self.total_tokens += res.tokens
+            await self.emit("task.trace", {"id": node.id, "agent": node.agent, "model": res.model, "tools": res.tool_calls,
+                                           "tokens_in": res.tokens_in, "tokens_out": res.tokens_out, "duration_ms": res.duration_ms})
             if self._is_tester(node.agent):
                 await self._test_fix_loop(node, graph, mission, ctx)
             if node.status is TaskStatus.RUNNING:  # ne pas écraser REVIEW_REQUIRED posé par la boucle test/debug

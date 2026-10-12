@@ -217,3 +217,11 @@ def test_detect_gpus_linux_amd_with_rocm_and_intel_igpu_shares_system_memory():
 def test_amd_gpu_changes_model_fit():
     p = _H.HardwareProfile("Linux", "6", "x86_64", "cpu", 8, 16000, 12000, 100.0, [_H.GPU("Radeon RX 7900", 24576, "amd")], ["vulkan"])
     assert _H.fit(p, 10) == "gpu_full" and _H.fit(p, 30) == "gpu_partial"
+
+
+def test_runtime_to_dict_never_exposes_api_key():
+    from app.runtimes.registry import RuntimeInfo
+    r = RuntimeInfo("sana", "sana", "Sana", "http://127.0.0.1:8020", requirements={"api_key": "sk-secret", "paths": {"image": "/x"}})
+    d = r.to_dict()
+    assert "sk-secret" not in repr(d) and d["requirements"] == {"paths": {"image": "/x"}}
+    assert r.requirements["api_key"] == "sk-secret"            # la copie interne reste utilisable par le bridge

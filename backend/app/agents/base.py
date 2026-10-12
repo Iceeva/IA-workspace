@@ -12,6 +12,7 @@ class AgentResult:
     model: str = ""
     tokens_in: int = 0
     tokens_out: int = 0
+    tool_calls: list = field(default_factory=list)
 
 
 @dataclass
@@ -44,7 +45,7 @@ class BaseAgent:
                 lr = await run_with_tools(self, msgs, self.max_tool_steps)
                 self.status = "done"
                 return AgentResult(lr.content, lr.tokens_in + lr.tokens_out, int((time.monotonic() - t0) * 1000),
-                                   lr.model, lr.tokens_in, lr.tokens_out)
+                                   lr.model, lr.tokens_in, lr.tokens_out, lr.calls)
             r = await self.provider.chat(msgs, model=self.model, temperature=self.temperature)
             self.status = "done"
             return AgentResult(r.content, r.total_tokens, int((time.monotonic() - t0) * 1000), r.model,

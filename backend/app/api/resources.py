@@ -183,6 +183,16 @@ async def get_events(exec_id: uuid.UUID, after: int = Query(0, ge=0), c: Ctx = D
     return _ok([{"seq": r.seq, "kind": r.kind, "data": r.data} for r in rows])
 
 
+@router.get("/executions/{exec_id}/trace")
+async def get_trace(exec_id: uuid.UUID, c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
+    """Trace d'observabilité (§41) : agents appelés, raison du choix, modèle, outils, durée, tokens, enchaînement."""
+    from app.orchestration.trace import build_trace
+    await _owned(db, Execution, exec_id, c.org_id, "Exécution")
+    rows = (await db.execute(select(ExecutionEvent).where(ExecutionEvent.execution_id == exec_id)
+            .order_by(ExecutionEvent.seq).limit(5000))).scalars()
+    return _ok(build_trace([{"seq": r.seq, "kind": r.kind, "data": r.data} for r in rows]))
+
+
 @router.post("/executions/{exec_id}/cancel")
 async def cancel_execution(exec_id: uuid.UUID, c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
     c.require(Role.MEMBER)

@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from app.runtimes import gguf, hardware
+from .quantize import QuantizeError, Quantizer, TYPES as QUANT_TYPES
 from app.runtimes.registry import KIND_CAPS, RuntimeInfo, RuntimeRegistry, detect_local
 
 VERSION = "0.1.0"
@@ -30,6 +31,11 @@ MAX_MEDIA_BODY = 60 * 1024 * 1024     # audio entrant (transcription)
 # route du bridge → (capacité requise, chemin chez le runtime). Le chemin peut être surchargé dans runtimes.json.
 MEDIA_ROUTES = {"/v1/audio/transcriptions": ("speech-to-text", "stt"), "/v1/images/generations": ("text-to-image", "image"),
                 "/v1/videos/generations": ("text-to-video", "video")}
+
+
+def _has_quantize() -> bool:
+    from .quantize import find_binary
+    return find_binary() is not None
 
 
 def load_runtimes_file(path: str | Path) -> list[RuntimeInfo]:
@@ -56,6 +62,7 @@ class Bridge:
         self.token, self.origins = token, set(allowed_origins)
         self.models_dirs = [Path(d).resolve() for d in (models_dirs or [])]
         self.registry = registry or RuntimeRegistry()
+        self.quantizer = Quantizer()
         self._detect = detect or (lambda: asyncio.run(detect_local(self.registry)))
         self.port = 0
 
@@ -179,6 +186,9 @@ def _handler(b: Bridge):
                 self._json(200, {"success": True, "data": [
                     {"key": f"{r.id}:{m}", "runtime": r.id, "model": m, "local": True}
                     for r in b.registry.all() if r.status == "connected" for m in r.models]})
+            elif path == "/quantize":
+                self._json(200, {"success": True, "data": {"types": sorted(QUANT_TYPES), "available": b.quantizer.binary is not None or _has_quantize(),
+                                                           "jobs": [j.to_dict() for j in b.quantizer.jobs.values()]}})
             elif path == "/gguf":
                 hw = hardware.detect()
                 rows = []
@@ -213,6 +223,21 @@ def _handler(b: Bridge):
                     return self._err(422, "BAD_GGUF", str(e))
                 d = info.to_dict(body.get("ctx")); d["fit"] = hardware.fit(hardware.detect(), d["memory_needed_gb"])
                 return self._json(200, {"success": True, "data": d})
+            if path == "/quantize":
+                try:
+                    src = b.resolve_gguf(str(body.get("path", "")))
+                    info = gguf.inspect(src)
+                    job = b.quantizer.start(src, str(body.get("type", "")), info.quantization,
+                                            allow_requantize=bool(body.get("allow_requantize", False)))
+                except PermissionError as e:
+                    return self._err(403, "FORBIDDEN_PATH", str(e))
+                except FileNotFoundError as e:
+                    return self._err(404, "NOT_FOUND", str(e))
+                except (gguf.GGUFError, QuantizeError) as e:
+                    return self._err(422, "QUANTIZE_REFUSED", str(e))
+                return self._json(202, {"success": True, "data": job.to_dict()})
+            if path == "/quantize/cancel":
+                return self._json(200, {"success": True, "data": {"cancelled": b.quantizer.cancel(str(body.get("id", "")))}})
             if path == "/v1/chat/completions":
                 return self._proxy(body)
             self._err(404, "NOT_FOUND", "Route inconnue")
