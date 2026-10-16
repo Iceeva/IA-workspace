@@ -14,6 +14,10 @@
 - Écran de trace d'exécution (§41), sélecteur GGUF dans le navigateur, registre des runtimes persistant (migration 0006), quantification réelle via `llama-quantize`, courbes temps réel du tableau de bord.
 - Sécurité : la clé API d'un runtime déclaré n'est jamais renvoyée au navigateur (`RuntimeInfo.to_dict`).
 - Correctif : `S3Storage.exists` était mal indenté (S3 inutilisable).
+- Attribution d'un GGUF à un agent en un clic (bridge `/serve`, `llama-server`, `/api/local-model-assignments`) ; le routage applique le modèle d'un agent avec son identifiant réel, y compris en mode automatique.
+- Équipes et Agent Builder séparés (routes `/teams` et `/agent-builder`).
+- Benchmarks : CPU/RAM/VRAM avec repos, pic et écart (serveur si endpoint local, sinon bridge `GET /resources`).
+- Registre des runtimes alimenté par le mode pull (`runtime_info` dans `/api/bridge/poll`, assaini, écriture limitée à une fois par minute sauf changement).
 - Voir docs/ROADMAP.md pour ce qui est vérifié, non lancé ou non fait.
 
 ## Non publié
