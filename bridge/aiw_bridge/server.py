@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from app.runtimes import gguf, hardware
+from .serve import ServeError, Servers
 from .quantize import QuantizeError, Quantizer, TYPES as QUANT_TYPES
 from app.runtimes.registry import KIND_CAPS, RuntimeInfo, RuntimeRegistry, detect_local
 
@@ -63,10 +64,16 @@ class Bridge:
         self.models_dirs = [Path(d).resolve() for d in (models_dirs or [])]
         self.registry = registry or RuntimeRegistry()
         self.quantizer = Quantizer()
+        self.servers = Servers(on_ready=self._serve_ready, on_gone=lambda s: self.registry.unregister(s.id))
         self._detect = detect or (lambda: asyncio.run(detect_local(self.registry)))
         self.port = 0
 
     # -- helpers -----------------------------------------------------------------------------
+    def _serve_ready(self, s) -> None:
+        """Un GGUF servi devient un runtime à part entière : le routeur et les agents peuvent l'utiliser."""
+        self.registry.register(RuntimeInfo(id=s.id, kind="llamacpp", name=f"llama.cpp · {s.model}", base_url=s.base_url,
+                                           status="connected", models=[s.model], capabilities={"chat", "code"}))
+
     def authorized(self, header: str | None) -> bool:
         if not header or not header.startswith("Bearer "):
             return False
@@ -186,6 +193,10 @@ def _handler(b: Bridge):
                 self._json(200, {"success": True, "data": [
                     {"key": f"{r.id}:{m}", "runtime": r.id, "model": m, "local": True}
                     for r in b.registry.all() if r.status == "connected" for m in r.models]})
+            elif path == "/serve":
+                from .serve import find_binary as _fb
+                self._json(200, {"success": True, "data": {"available": b.servers.binary is not None or _fb() is not None,
+                                                           "servers": [x.to_dict() for x in b.servers.items.values()]}})
             elif path == "/quantize":
                 self._json(200, {"success": True, "data": {"types": sorted(QUANT_TYPES), "available": b.quantizer.binary is not None or _has_quantize(),
                                                            "jobs": [j.to_dict() for j in b.quantizer.jobs.values()]}})
@@ -223,6 +234,21 @@ def _handler(b: Bridge):
                     return self._err(422, "BAD_GGUF", str(e))
                 d = info.to_dict(body.get("ctx")); d["fit"] = hardware.fit(hardware.detect(), d["memory_needed_gb"])
                 return self._json(200, {"success": True, "data": d})
+            if path == "/serve":
+                try:
+                    src = b.resolve_gguf(str(body.get("path", "")))
+                    ctx = int(body.get("ctx") or 4096)
+                    ngl = body.get("ngl")
+                    sv = b.servers.start(src, ctx, int(ngl) if ngl is not None else None)
+                except PermissionError as e:
+                    return self._err(403, "FORBIDDEN_PATH", str(e))
+                except FileNotFoundError as e:
+                    return self._err(404, "NOT_FOUND", str(e))
+                except (ServeError, ValueError, TypeError) as e:
+                    return self._err(422, "SERVE_REFUSED", str(e))
+                return self._json(202, {"success": True, "data": sv.to_dict()})
+            if path == "/serve/stop":
+                return self._json(200, {"success": True, "data": {"stopped": b.servers.stop(str(body.get("id", "")))}})
             if path == "/quantize":
                 try:
                     src = b.resolve_gguf(str(body.get("path", "")))

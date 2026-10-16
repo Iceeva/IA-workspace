@@ -14,6 +14,7 @@ from app.llm.providers import PRESETS
 from app.models.entities import AiSettings, ProviderConfig, Role
 from app.routing.models import NoModelAvailable
 from app.routing.selector import AgentSelector
+from app.services import local_assign as LA
 from app.services.assembly import get_org_catalog
 from app.runtimes import quantization
 from app.services.audit import audit
@@ -316,3 +317,66 @@ async def route_preview(b: RouteIn, c: Ctx = Depends(ctx), db: AsyncSession = De
     except NoModelAvailable as e:
         raise AppError(422, "NO_MODEL_AVAILABLE", str(e))
     return ok(d.to_dict())
+
+
+# ---- attribuer un modèle local à un agent (§9 mode 2, §11) --------------------------------------------------------------
+class LocalAssignIn(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=80)
+    runtime_id: str = Field(min_length=1, max_length=80)
+    model: str = Field(min_length=1, max_length=80)
+    caps: list[str] = Field(default_factory=lambda: ["chat"], max_length=6)
+    context: int = Field(4096, ge=256, le=262144)
+
+
+async def _ai_settings(db, org_id) -> AiSettings:
+    s = (await db.execute(select(AiSettings).where(AiSettings.organization_id == org_id))).scalar_one_or_none()
+    if s is None:
+        s = AiSettings(organization_id=org_id, per_agent={})
+        db.add(s)
+    return s
+
+
+@router.get("/local-model-assignments")
+async def list_local_assignments(c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
+    c.require(Role.ADMIN)
+    s = (await db.execute(select(AiSettings).where(AiSettings.organization_id == c.org_id))).scalar_one_or_none()
+    return ok(LA.local_assignments(s.per_agent if s else {}))
+
+
+@router.put("/local-model-assignments")
+async def assign_local_model(b: LocalAssignIn, request: Request, c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
+    """Un clic : crée au besoin le fournisseur « bridge », y déclare le modèle servi, et l'attribue à l'agent."""
+    c.require(Role.ADMIN)
+    if (await get_org_catalog(db, c.org_id)).get(b.agent_id) is None:
+        raise AppError(404, "RESOURCE_NOT_FOUND", "Agent inconnu")
+    prov = (await db.execute(select(ProviderConfig).where(ProviderConfig.organization_id == c.org_id,
+                                                          ProviderConfig.name == LA.PROVIDER_NAME))).scalar_one_or_none()
+    if prov is not None and prov.kind != "bridge":
+        raise AppError(409, "PROVIDER_NAME_TAKEN", f"Le nom « {LA.PROVIDER_NAME} » est déjà utilisé par un fournisseur d'un autre type")
+    if prov is None:
+        prov = ProviderConfig(organization_id=c.org_id, kind="bridge", name=LA.PROVIDER_NAME, models=[], enabled=True, priority=50, local=True, options={})
+        db.add(prov)
+    s = await _ai_settings(db, c.org_id)
+    try:
+        models, per_agent, key = LA.assign(list(prov.models or []), dict(s.per_agent or {}), agent_id=b.agent_id,
+                                           runtime_id=b.runtime_id, model=b.model, caps=b.caps, context=b.context)
+    except LA.AssignError as e:
+        raise AppError(422, "BAD_ASSIGNMENT", str(e))
+    prov.models, prov.enabled, s.per_agent = models, True, per_agent
+    await audit(db, "agent.local_model.assign", user_id=c.user.id, org_id=c.org_id, resource="agent", resource_id=b.agent_id,
+                request=request, meta={"key": key})
+    await db.commit()
+    return ok({"agent_id": b.agent_id, "key": key, "mode": s.mode})
+
+
+@router.delete("/local-model-assignments/{agent_id}")
+async def unassign_local_model(agent_id: str, request: Request, c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
+    c.require(Role.ADMIN)
+    s = await _ai_settings(db, c.org_id)
+    try:
+        s.per_agent = LA.unassign(dict(s.per_agent or {}), agent_id)
+    except LA.AssignError as e:
+        raise AppError(404, "RESOURCE_NOT_FOUND", str(e))
+    await audit(db, "agent.local_model.unassign", user_id=c.user.id, org_id=c.org_id, resource="agent", resource_id=agent_id, request=request)
+    await db.commit()
+    return ok({"agent_id": agent_id, "unassigned": True})
