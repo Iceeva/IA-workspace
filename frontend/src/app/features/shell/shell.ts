@@ -63,7 +63,7 @@ export class Shell implements OnInit {
     { path: '/code', label: 'Code', icon: Code2 }, { path: '/memory', label: 'Mémoire', icon: Brain },
     { path: '/workflows', label: 'Workflows', icon: Workflow },
     { path: '/automations', label: 'Automatisations', icon: Zap }, { path: '/marketplace', label: 'Marketplace', icon: Store },
-    { path: '/teams', label: 'Équipes', icon: Users }, { path: '/providers', label: 'Fournisseurs', icon: Plug },
+    { path: '/agent-builder', label: 'Agent Builder', icon: Code2 }, { path: '/teams', label: 'Équipes', icon: Users }, { path: '/providers', label: 'Fournisseurs', icon: Plug },
     { path: '/runtimes', label: 'Runtimes locaux', icon: Cpu }, { path: '/quantization', label: 'Quantification', icon: Scale },
     { path: '/local-models', label: 'Modèles locaux', icon: HardDrive }, { path: '/benchmarks', label: 'Benchmarks', icon: Timer },
     { path: '/monitoring', label: 'Monitoring', icon: Radar }, { path: '/security', label: 'Sécurité', icon: Lock }, { path: '/usage', label: 'Usage', icon: Gauge },

@@ -27,6 +27,7 @@ export const routes: Routes = [
       { path: 'workflows', ...lazy(() => import('./features/workflows/workflows').then(m => m.Workflows)) },
       { path: 'marketplace', ...lazy(() => import('./features/marketplace/marketplace').then(m => m.Marketplace)) },
       { path: 'providers', ...lazy(() => import('./features/providers/providers').then(m => m.Providers)) },
+      { path: 'agent-builder', ...lazy(() => import('./features/teams/agent-builder').then(m => m.AgentBuilder)) },
       { path: 'teams', ...lazy(() => import('./features/teams/teams').then(m => m.Teams)) },
       { path: 'automations', ...lazy(() => import('./features/automations/automations').then(m => m.Automations)) },
       { path: 'quantization', ...lazy(() => import('./features/quantization/quantization').then(m => m.Quantization)) },
