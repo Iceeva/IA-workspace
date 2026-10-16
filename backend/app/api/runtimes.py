@@ -23,6 +23,22 @@ def _dto(r: RuntimeRecord, now: datetime) -> dict:
             "last_seen": r.last_seen.isoformat() if r.last_seen else None, "stale": is_stale(age), "mine": None}
 
 
+async def persist_runtimes(db: AsyncSession, org_id, user_id, items: list[dict]) -> None:
+    """Remplace l'état connu des runtimes d'un utilisateur (navigateur ou poll du bridge) par `items`, déjà assainis."""
+    now = datetime.now(timezone.utc)
+    have = {r.runtime_id: r for r in (await db.execute(select(RuntimeRecord).where(
+        RuntimeRecord.organization_id == org_id, RuntimeRecord.user_id == user_id))).scalars()}
+    for it in items:
+        row = have.pop(it["runtime_id"], None) or RuntimeRecord(organization_id=org_id, user_id=user_id, runtime_id=it["runtime_id"])
+        for k, v in it.items():
+            setattr(row, k, v)
+        row.last_seen = now
+        db.add(row)
+    for gone in have.values():                      # absent du dernier rapport : marqué injoignable (on garde l'historique)
+        gone.status = "unreachable"
+    await db.commit()
+
+
 @router.post("/report")
 async def report(body: dict = Body(...), c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
     """Remplace l'état connu des runtimes de CET utilisateur par celui que son bridge vient de détecter."""
@@ -31,18 +47,7 @@ async def report(body: dict = Body(...), c: Ctx = Depends(ctx), db: AsyncSession
         items = sanitize_report(body)
     except ReportError as e:
         raise AppError(422, "BAD_REPORT", str(e))
-    now = datetime.now(timezone.utc)
-    have = {r.runtime_id: r for r in (await db.execute(select(RuntimeRecord).where(
-        RuntimeRecord.organization_id == c.org_id, RuntimeRecord.user_id == c.user.id))).scalars()}
-    for it in items:
-        row = have.pop(it["runtime_id"], None) or RuntimeRecord(organization_id=c.org_id, user_id=c.user.id, runtime_id=it["runtime_id"])
-        for k, v in it.items():
-            setattr(row, k, v)
-        row.last_seen = now
-        db.add(row)
-    for gone in have.values():                      # absent du dernier rapport : marqué injoignable (on garde l'historique)
-        gone.status = "unreachable"
-    await db.commit()
+    await persist_runtimes(db, c.org_id, c.user.id, items)
     return ok({"stored": len(items)})
 
 

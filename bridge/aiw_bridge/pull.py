@@ -89,6 +89,11 @@ class PullClient:
         rts = [r for r in self.bridge.registry.all() if r.status == "connected"]
         return [f"{r.id}:{m}" for r in rts for m in r.models], [r.id for r in rts]
 
+    def _runtime_info(self) -> list[dict]:
+        """Fiche de chaque runtime détecté (sans clé ni chemin : seuls des champs publics sont envoyés)."""
+        keep = ("id", "kind", "name", "base_url", "status", "version", "capabilities", "models", "latency_ms")
+        return [{k: v for k, v in r.to_dict().items() if k in keep} for r in self.bridge.registry.all()][:20]
+
     def _execute(self, spec: dict) -> dict:
         rt, model = self.bridge.runtime_for(spec["model"])
         if rt is None or model not in rt.models:   # uniquement les modèles annoncés par ce bridge
@@ -109,7 +114,7 @@ class PullClient:
 
     def run_once(self) -> bool:
         models, runtimes = self._models()
-        resp = self._call("/api/bridge/poll", {"models": models, "runtimes": runtimes, "version": VERSION,
+        resp = self._call("/api/bridge/poll", {"models": models, "runtimes": runtimes, "runtime_info": self._runtime_info(), "version": VERSION,
                                                "wait_s": self.wait_s}, self.wait_s + 15)
         job = (resp or {}).get("data")
         if not job:

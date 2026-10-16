@@ -1,4 +1,4 @@
-from app.runtimes.report import ReportError, is_stale, sanitize_report
+from app.runtimes.report import ReportError, fingerprint, is_stale, persist_due, sanitize_report
 
 
 def test_report_keeps_only_local_bounded_fields_and_drops_secrets():
@@ -29,3 +29,14 @@ def test_report_rejects_non_list_and_caps_size():
 
 def test_staleness_threshold():
     assert not is_stale(60) and is_stale(121)
+
+
+def test_poll_persistence_is_throttled_but_reacts_to_changes():
+    a = sanitize_report({"runtimes": [{"id": "ollama", "models": ["m1"], "status": "connected", "latency_ms": 10}]})
+    same_but_slower = sanitize_report({"runtimes": [{"id": "ollama", "models": ["m1"], "status": "connected", "latency_ms": 99}]})
+    new_model = sanitize_report({"runtimes": [{"id": "ollama", "models": ["m1", "m2"], "status": "connected"}]})
+    assert fingerprint(a) == fingerprint(same_but_slower) != fingerprint(new_model)
+    assert persist_due(None, fingerprint(a), 0)                                       # 1er rapport : on écrit
+    assert not persist_due((fingerprint(a), 0.0), fingerprint(same_but_slower), 30)   # inchangé et récent : rien
+    assert persist_due((fingerprint(a), 0.0), fingerprint(new_model), 30)             # nouveau modèle : on écrit
+    assert persist_due((fingerprint(a), 0.0), fingerprint(a), 61)                     # rafraîchit last_seen

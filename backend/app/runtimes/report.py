@@ -45,3 +45,17 @@ def sanitize_report(payload: dict) -> list[dict]:
 
 def is_stale(age_s: float) -> bool:
     return age_s > STALE_AFTER_S
+
+
+PERSIST_EVERY_S = 60
+
+
+def fingerprint(items: list[dict]) -> str:
+    """Empreinte stable d'un rapport : la latence varie à chaque détection, elle n'en fait pas partie."""
+    import json
+    return json.dumps([{k: v for k, v in i.items() if k != "latency_ms"} for i in items], sort_keys=True)
+
+
+def persist_due(last: tuple[str, float] | None, fp: str, now: float, every_s: float = PERSIST_EVERY_S) -> bool:
+    """Écrire en base seulement si le rapport a changé, ou pour rafraîchir `last_seen` toutes les `every_s` secondes."""
+    return last is None or last[0] != fp or now - last[1] >= every_s

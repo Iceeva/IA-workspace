@@ -46,6 +46,9 @@ JOB = {"id": "j1", "type": "chat", "model": "ollama:qwen3:8b", "temperature": 0.
 def test_pull_cycle_executes_chat_on_local_runtime_and_reports_usage():
     net = FakeNet([JOB]); pc = PullClient(bridge_with(), "https://aiw.example", "KEY", "ORG", http=net)
     assert pc.run_once() is True and net.last_poll["models"] == ["ollama:qwen3:8b"] and net.last_poll["runtimes"] == ["ollama"]
+    info = net.last_poll["runtime_info"]                                                              # fiche envoyée pour le registre persistant
+    assert [i["id"] for i in info] == ["ollama"] and info[0]["models"] == ["qwen3:8b"] and info[0]["base_url"].startswith("http://")
+    assert "api_key" not in json.dumps(info) and "requirements" not in info[0] and "path" not in info[0]
     assert net.posted == [("j1", {"ok": True, "content": "réponse locale", "prompt_tokens": 12, "completion_tokens": 5})]
     assert net.runtime_calls[0]["model"] == "qwen3:8b" and net.runtime_calls[0]["stream"] is False   # préfixe retiré
     assert pc.run_once() is False and len(net.posted) == 1                                            # file vide
