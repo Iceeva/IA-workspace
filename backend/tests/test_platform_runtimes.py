@@ -225,3 +225,20 @@ def test_runtime_to_dict_never_exposes_api_key():
     d = r.to_dict()
     assert "sk-secret" not in repr(d) and d["requirements"] == {"paths": {"image": "/x"}}
     assert r.requirements["api_key"] == "sk-secret"            # la copie interne reste utilisable par le bridge
+
+
+def test_benchmark_reports_baseline_and_delta_and_survives_a_broken_sampler():
+    from app.runtimes.benchmark import summarize_samples, is_local_endpoint
+    vals = iter([1000, 1000, 3000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000])
+    rep = asyncio.run(run_benchmark(Fake(), "m", runs=2, sampler=lambda: {"ram_used_mb": next(vals, 5000), "x": "texte"}, sample_every_s=0.005))
+    assert rep.baseline == {"ram_used_mb": 1000}                       # mesuré avant le 1er appel
+    assert rep.peak["ram_used_mb"] >= 3000 and rep.delta["ram_used_mb"] == rep.peak["ram_used_mb"] - 1000
+    assert "x" not in rep.peak                                         # valeurs non numériques ignorées
+    def boom(): raise RuntimeError("nvidia-smi absent")
+    rep = asyncio.run(run_benchmark(Fake(), "m", runs=1, sampler=boom, sample_every_s=0.01))
+    assert rep.success_rate == 1.0 and rep.peak == {} and rep.delta == {}
+    s = summarize_samples([{"ram_used_mb": 10, "cpu_percent": 1}, {"ram_used_mb": 30}, "n'importe quoi", {}])
+    assert s["baseline"]["ram_used_mb"] == 10 and s["peak"]["ram_used_mb"] == 30 and s["delta"] == {"ram_used_mb": 20, "cpu_percent": 0}
+    assert summarize_samples([]) == {"baseline": {}, "peak": {}, "delta": {}}
+    assert is_local_endpoint("http://127.0.0.1:11434/v1") and is_local_endpoint("http://localhost:8080")
+    assert not is_local_endpoint("https://api.openai.com/v1") and not is_local_endpoint(None) and not is_local_endpoint("http://192.168.1.5:8080")

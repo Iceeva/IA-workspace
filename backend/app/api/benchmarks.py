@@ -11,7 +11,7 @@ from app.core.db import get_db
 from app.llm.providers import build_provider
 from app.models.entities import Role
 from app.runtimes import hardware as H
-from app.runtimes.benchmark import BASIC_SUITE, run_benchmark
+from app.runtimes.benchmark import BASIC_SUITE, is_local_endpoint, run_benchmark, system_sampler
 from app.services import assembly as A
 from .common import ok
 from .deps import Ctx, ctx
@@ -31,8 +31,10 @@ class BenchIn(BaseModel):
 @router.post("/benchmarks")
 async def benchmark(b: BenchIn, c: Ctx = Depends(ctx), db: AsyncSession = Depends(get_db)):
     """Mesure TTFT, débit, stabilité et qualité d'un modèle d'un fournisseur configuré. Réservé aux administrateurs
-    (les appels à un fournisseur cloud sont facturés). Les ressources système ne sont pas mesurées ici : le serveur
-    n'est pas la machine de l'utilisateur — le bridge local expose son propre profil matériel."""
+    (les appels à un fournisseur cloud sont facturés). CPU/RAM/VRAM sont mesurés côté serveur uniquement quand le
+    modèle tourne sur la machine de l'API (endpoint en boucle locale) ; pour un fournisseur distant ou le bridge de
+    l'utilisateur, ce n'est pas la bonne machine : `resources_scope` vaut alors "none" et le navigateur mesure via
+    le bridge (GET /resources)."""
     c.require(Role.ADMIN)
     from app.api.bridge import get_broker
     cfgs, _, _ = await A.load_providers(db, c.org_id, c.user.id, get_broker())
@@ -43,8 +45,10 @@ async def benchmark(b: BenchIn, c: Ctx = Depends(ctx), db: AsyncSession = Depend
         raise AppError(422, "UNKNOWN_MODEL", "Ce modèle n'est pas déclaré pour ce fournisseur")
     prov = build_provider(cfg.kind, cfg.base_url, cfg.api_key, cfg.options)
     async with _SEM:
-        rep = await run_benchmark(prov, b.model, runs=b.runs, max_tokens=b.max_tokens, quality=BASIC_SUITE if b.quality else None)
-    return ok({**rep.to_dict(), "provider": b.provider, "model": b.model})
+        measured = cfg.kind != "bridge" and is_local_endpoint(cfg.base_url)
+        rep = await run_benchmark(prov, b.model, runs=b.runs, max_tokens=b.max_tokens, quality=BASIC_SUITE if b.quality else None,
+                                  sampler=system_sampler if measured else None)
+    return ok({**rep.to_dict(), "provider": b.provider, "model": b.model, "resources_scope": "server" if measured else "none"})
 
 
 class ProfileIn(BaseModel):

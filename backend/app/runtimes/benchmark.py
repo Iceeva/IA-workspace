@@ -51,7 +51,9 @@ class BenchReport:
     cold_start_ms: float | None            # 1er essai − médiane des suivants : proxy du temps de chargement
     latency_stdev_ms: float | None         # stabilité
     quality_pass_rate: float | None
-    peak: dict = field(default_factory=dict)  # ressources (si un sampler est fourni)
+    peak: dict = field(default_factory=dict)      # ressources : maximum observé (si un sampler est fourni)
+    baseline: dict = field(default_factory=dict)  # ressources au repos, avant le premier appel
+    delta: dict = field(default_factory=dict)     # peak − baseline : ce que le modèle consomme réellement
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -82,18 +84,29 @@ async def run_benchmark(provider: LLMProvider, model: str, *, prompt: str = "Exp
                         runs: int = 3, max_tokens: int = 128, quality: list[tuple[str, Check]] | None = None,
                         sampler: Callable[[], dict] | None = None, sample_every_s: float = 0.5) -> BenchReport:
     peak: dict = {}
+    baseline: dict = {}
     stop = asyncio.Event()
+
+    async def read() -> dict:
+        # le sampler lance des sous-processus (nvidia-smi) : hors de la boucle d'événements
+        try:
+            return {k: v for k, v in ((await asyncio.to_thread(sampler)) or {}).items() if isinstance(v, (int, float))}
+        except Exception:  # noqa: BLE001 — une mesure indisponible ne doit pas faire échouer le benchmark
+            return {}
 
     async def sample():
         while not stop.is_set():
-            for k, v in (sampler() or {}).items():
-                if isinstance(v, (int, float)):
-                    peak[k] = max(peak.get(k, v), v)
+            for k, v in (await read()).items():
+                peak[k] = max(peak.get(k, v), v)
             try:
                 await asyncio.wait_for(stop.wait(), sample_every_s)
             except asyncio.TimeoutError:
                 pass
-    task = asyncio.create_task(sample()) if sampler else None
+    if sampler:
+        baseline = await read()      # amorce aussi psutil.cpu_percent, dont le 1er appel renvoie 0
+        task = asyncio.create_task(sample())
+    else:
+        task = None
     results = [(await _one(provider, model, prompt, max_tokens))[0] for _ in range(max(1, runs))]
     q_rate = None
     if quality:
@@ -115,7 +128,9 @@ async def run_benchmark(provider: LLMProvider, model: str, *, prompt: str = "Exp
         tokens_per_s=round(sum(r.tokens for r in good) / (gen_ms / 1000), 2) if good else None,
         cold_start_ms=round(cold, 1) if cold is not None else None,
         latency_stdev_ms=round(statistics.stdev([r.total_ms for r in good]), 1) if len(good) >= 2 else None,
-        quality_pass_rate=q_rate, peak=peak, errors=[r.error for r in results if r.error])
+        quality_pass_rate=q_rate, peak=peak, baseline=baseline,
+        delta={k: round(peak[k] - baseline[k], 1) for k in peak if k in baseline},
+        errors=[r.error for r in results if r.error])
 
 
 def system_sampler() -> dict:
@@ -135,3 +150,28 @@ def system_sampler() -> dict:
         except ValueError:
             pass
     return out
+
+
+def summarize_samples(samples: list[dict]) -> dict:
+    """Résume des échantillons système pris ailleurs (bridge) : au repos = 1er échantillon, pic = maximum, delta."""
+    rows = [{k: v for k, v in s.items() if isinstance(v, (int, float))} for s in samples if isinstance(s, dict)]
+    rows = [r for r in rows if r]
+    if not rows:
+        return {"baseline": {}, "peak": {}, "delta": {}}
+    peak: dict = {}
+    for r in rows:
+        for k, v in r.items():
+            peak[k] = max(peak.get(k, v), v)
+    base = rows[0]
+    return {"baseline": base, "peak": peak, "delta": {k: round(peak[k] - base[k], 1) for k in peak if k in base}}
+
+
+def is_local_endpoint(base_url: str | None) -> bool:
+    """Vrai si le fournisseur tourne sur la machine du serveur d'API (boucle locale) : seul cas où les ressources
+    mesurées côté serveur sont celles du modèle."""
+    from urllib.parse import urlparse
+    try:
+        host = (urlparse(base_url or "").hostname or "").lower()
+    except ValueError:
+        return False
+    return host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"} or host.startswith("127.")

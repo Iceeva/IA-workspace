@@ -185,6 +185,9 @@ def _handler(b: Bridge):
                 return
             if path == "/hardware":
                 self._json(200, {"success": True, "data": hardware.detect().to_dict()})
+            elif path == "/resources":
+                from app.runtimes.benchmark import system_sampler
+                self._json(200, {"success": True, "data": system_sampler()})
             elif path == "/runtimes":
                 b._detect()
                 self._json(200, {"success": True, "data": [r.to_dict() for r in b.registry.all()]})

@@ -24,6 +24,7 @@ export class BridgeClient {
   }
   health() { return this.call<any>('/health'); }
   hardware() { return this.call<any>('/hardware'); }
+  resources() { return this.call<Record<string, number>>('/resources'); }
   runtimes() { return this.call<any[]>('/runtimes'); }
   gguf() { return this.call<any[]>('/gguf'); }
   serveStatus() { return this.call<{ available: boolean; servers: any[] }>('/serve'); }

@@ -83,6 +83,8 @@ def test_bridge_end_to_end():
             # authentification
             assert call(b, "/hardware", token=None)[0] == 401 and call(b, "/hardware", token="x" * 40)[0] == 401
             s, _, body = call(b, "/hardware"); assert s == 200 and json.loads(body)["data"]["threads"] >= 1
+            assert call(b, "/resources", token=None)[0] == 401
+            s, _, body = call(b, "/resources"); assert s == 200 and isinstance(json.loads(body)["data"], dict)
             # CORS + Private Network Access
             s, h, _ = call(b, "/hardware", method="OPTIONS", token=None, origin=ORIGIN,
                            headers={"Access-Control-Request-Private-Network": "true"})
