@@ -62,7 +62,7 @@ async def run_workflow_job(maker, run_id: uuid.UUID, broker: JobBroker | None = 
         approver = A.DbApprover(maker, org_id, user_id, run_id=run_id, emit=emit)
         orch = Orchestrator(
             provider, model, emit, resolve_agent=catalog.get,
-            route_for=(lambda a: runtime.route_key("agent", None, a.sensitive, set(a.needs))) if runtime else None,
+            route_for=(lambda a: runtime.route_key("agent", None, a.sensitive, set(a.needs), agent_id=a.id)) if runtime else None,
             toolbox_for=A.toolbox_factory(registry, approver, emit))
 
         async def run_agent(agent_id: str, instruction: str, context: str):

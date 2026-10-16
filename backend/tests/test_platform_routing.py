@@ -152,3 +152,24 @@ def test_provider_presets_cover_requested_vendors_and_build_validates():
         except LLMConfigError:
             pass
     assert build_provider("custom", "http://x:9/v1/", None).base_url == "http://x:9/v1"
+
+
+def test_per_agent_assignment_applies_in_auto_mode_but_not_in_single_mode():
+    """Un GGUF attribué à un agent doit être utilisé même quand la politique générale est « automatique »."""
+    r = router()
+    p = RoutingPrefs(mode="auto", per_agent={"python-developer": "ollama:qwen3-8b"})
+    assert r.route({"chat"}, p, agent_id="python-developer").chosen.key == "ollama:qwen3-8b"
+    assert r.route({"chat"}, p, agent_id="researcher").reason.startswith("auto")          # les autres agents restent en automatique
+    s = RoutingPrefs(mode="single", single="cloud:fast", per_agent={"python-developer": "ollama:qwen3-8b"})
+    assert r.route({"chat"}, s, agent_id="python-developer").chosen.key == "cloud:fast"   # « un seul modèle » reste absolu
+    p.local_only = True
+    assert r.route({"chat"}, p, agent_id="python-developer").chosen.local
+
+
+def test_runtime_route_key_uses_the_real_agent_id():
+    from app.services.runtime_factory import ProviderCfg, build_runtime
+    cfgs = [ProviderCfg("openai", "cloud", None, "k", [{"id": "big", "caps": ["chat"], "quality": 0.9}]),
+            ProviderCfg("bridge", "bridge", None, None, [{"id": "llamacpp:qwen", "caps": ["chat"], "local": True}], local=True, options={"broker": object(), "scope": "s"})]
+    rt = build_runtime(cfgs, RoutingPrefs(mode="auto", per_agent={"python-developer": "bridge:llamacpp:qwen"}))
+    assert rt.route_key("agent", None, False, {"chat"}, agent_id="python-developer") == "bridge:llamacpp:qwen"
+    assert rt.route_key("agent", None, False, {"chat"}, agent_id="researcher").startswith("auto:")

@@ -148,7 +148,7 @@ async def run_execution(exec_id: str) -> None:
         orch = Orchestrator(
             provider, model, emit, cancelled, agent_overrides=overrides, selector=AgentSelector(catalog),
             resolve_agent=catalog.get,
-            route_for=(lambda a: runtime.route_key("agent", None, a.sensitive, set(a.needs))) if runtime else None,
+            route_for=(lambda a: runtime.route_key("agent", None, a.sensitive, set(a.needs), agent_id=a.id)) if runtime else None,
             toolbox_for=A.toolbox_factory(registry, approver, emit))
         docs_ctx = "\n".join(f"[{h['path']}#{h['chunk']}] {h['text'][:600]}" for h in rag_hits)
         mission_ctx = (mission + ("\n\nMémoire du projet:\n" + "\n".join(project_mem) if project_mem else "") +

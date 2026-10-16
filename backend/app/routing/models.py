@@ -115,7 +115,8 @@ class ModelRouter:
     def _manual_key(prefs: RoutingPrefs, agent_id: str | None) -> str | None:
         if prefs.mode == "single" and prefs.single:
             return prefs.single
-        if prefs.mode == "per_agent" and agent_id and agent_id in prefs.per_agent:
+        # Un modèle attribué à CET agent (ex. un GGUF local) prime en mode « par agent » ET en mode automatique.
+        if prefs.mode in ("per_agent", "auto") and agent_id and agent_id in prefs.per_agent:
             return prefs.per_agent[agent_id]
         if prefs.mode == "per_agent" and prefs.single:   # agent non configuré : modèle par défaut s'il existe
             return prefs.single

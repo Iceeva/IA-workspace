@@ -32,17 +32,18 @@ class Runtime:
     providers: dict
 
     def route_key(self, role: str, agent_model: str | None = None, sensitive: bool = False,
-                  needs: set[str] | None = None) -> str:
+                  needs: set[str] | None = None, agent_id: str | None = None) -> str:
         """Clé de route pour un rôle. Un modèle explicitement choisi pour l'agent est respecté ; sinon la
         préférence de l'organisation s'applique (auto → chaîne classée avec repli ; single/per_agent → modèle fixé).
         Lève NoModelAvailable si la politique ne laisse aucun modèle possible."""
         if agent_model and self.registry.get(agent_model):
             return agent_model
         needs = set(needs) if needs else ROLE_NEEDS.get(role, {"chat"})
-        if self.prefs.mode == "auto":
-            self.router.route(needs, self.prefs, agent_id=role, sensitive=sensitive)  # valide la faisabilité
+        who = agent_id or role                      # identifiant de l'AGENT (catalogue) : c'est lui que la préférence « par agent » désigne
+        decision = self.router.route(needs, self.prefs, agent_id=who, sensitive=sensitive)   # valide la faisabilité et la confidentialité
+        if self.prefs.mode == "auto" and who not in self.prefs.per_agent:
             return "auto:" + ",".join(sorted(needs))
-        return self.router.route(needs, self.prefs, agent_id=role, sensitive=sensitive).chosen.key
+        return decision.chosen.key
 
 
 def _model(cfg: ProviderCfg, m: dict) -> ModelInfo:
